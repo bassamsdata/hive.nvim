@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/bassamsdata/codecompanion-extra.nvim/compare/v1.0.0...v1.1.0) (2026-01-14)
+
+
+### Features
+
+* **adaptes:** move my adapters to the plugin from my config ([004650d](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/004650dd4fc811b677a64f59b6a36fab5d34888f))
+
 ## 1.0.0 (2026-01-13)
 
 
