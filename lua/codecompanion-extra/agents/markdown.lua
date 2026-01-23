@@ -1,39 +1,44 @@
--- Markdown Mode Loader for codecompanion-extra
--- Loads mode definitions from markdown files with YAML frontmatter
--- Functions here use internal codecompanion functions for YAML handling.
--- Some functions are partially copied and simplified from codecompanion.nvim.
--- credit to https://github.com/olimorris/codecompanion.nvim
+-- Markdown Agent Loader for codecompanion-extra
+-- Loads agent definitions from markdown files with YAML frontmatter
 --
 -- File format:
 -- ---
--- name: plan
--- description: Research and analyze before coding
+-- name: explorer
+-- type: subagent
+-- description: Fast codebase exploration
 -- tools:
 --   - read_file
 --   - grep_search
 --   - file_search
+-- permissions:
+--   can_spawn_subagents: false
+--   can_edit_files: false
+--   can_run_commands: false
 -- opts:
---   include_default_system_prompt: true
+--   include_default_system_prompt: false
 --   include_tools_system_prompt: true
+--   hidden: true
 --   auto_submit_errors: false
---   auto_submit_success: false
+--   auto_submit_success: true
 -- ---
 --
 -- # System Prompt
 --
--- You are in PLAN mode...
+-- You are an explorer subagent...
 -- (rest of markdown becomes the system_prompt)
 
 local M = {}
 
 local uv = vim.uv
 
----@class CodeCompanionExtra.MarkdownMode
+---@class CodeCompanionExtra.MarkdownAgent
 ---@field name string
+---@field type? CodeCompanionExtra.AgentType
 ---@field description? string
 ---@field tools? string[]
+---@field permissions? CodeCompanionExtra.AgentPermissions
 ---@field system_prompt? string
----@field opts? CodeCompanionExtra.ModeOpts
+---@field opts? CodeCompanionExtra.AgentOpts
 
 ---Check if a path is a directory
 ---@param path string
@@ -103,9 +108,9 @@ local function extract_system_prompt(body)
   return prompt ~= "" and prompt or nil
 end
 
----Parse a single markdown file into a mode definition
+---Parse a single markdown file into an agent definition
 ---@param path string
----@return CodeCompanionExtra.MarkdownMode|nil
+---@return CodeCompanionExtra.MarkdownAgent|nil
 function M.parse_file(path)
   local content = read_file(path)
   if not content or content == "" then return nil end
@@ -115,31 +120,33 @@ function M.parse_file(path)
 
   if not frontmatter.name then frontmatter.name = vim.fn.fnamemodify(path, ":t:r") end
 
-  local mode = {
+  local agent = {
     name = frontmatter.name,
+    type = frontmatter.type or "agent",
     description = frontmatter.description,
     tools = frontmatter.tools,
+    permissions = frontmatter.permissions,
     opts = frontmatter.opts,
   }
 
   local system_prompt = extract_system_prompt(body)
-  if system_prompt then mode.system_prompt = system_prompt end
+  if system_prompt then agent.system_prompt = system_prompt end
 
-  return mode
+  return agent
 end
 
----Load all markdown modes from a directory
+---Load all markdown agents from a directory
 ---@param dir string
----@return table<string, CodeCompanionExtra.MarkdownMode>
+---@return table<string, CodeCompanionExtra.MarkdownAgent>
 function M.load_from_dir(dir)
-  local modes = {}
+  local agents = {}
 
   dir = vim.fs.normalize(dir)
 
-  if not is_dir(dir) then return modes end
+  if not is_dir(dir) then return agents end
 
   local handle = uv.fs_scandir(dir)
-  if not handle then return modes end
+  if not handle then return agents end
 
   while true do
     local name, ftype = uv.fs_scandir_next(handle)
@@ -147,30 +154,33 @@ function M.load_from_dir(dir)
 
     if (ftype == "file" or ftype == "link") and name:match("%.md$") then
       local path = vim.fs.joinpath(dir, name)
-      local ok, mode = pcall(M.parse_file, path)
+      local ok, agent = pcall(M.parse_file, path)
 
-      if ok and mode and mode.name then modes[mode.name] = mode end
+      if ok and agent and agent.name then agents[agent.name] = agent end
     end
   end
 
-  return modes
+  return agents
 end
 
----Register modes from a directory with the modes module
+---Register agents from a directory with the agents module
 ---@param dir string
----@return number count Number of modes registered
+---@return number count Number of agents registered
 function M.register_from_dir(dir)
-  local loaded_modes = M.load_from_dir(dir)
+  local loaded_agents = M.load_from_dir(dir)
   local count = 0
 
-  local modes_module = require("codecompanion-extra.modes")
+  local agents_module = require("codecompanion-extra.agents")
 
-  for name, mode in pairs(loaded_modes) do
-    modes_module.register(name, {
-      description = mode.description,
-      tools = mode.tools,
-      system_prompt = mode.system_prompt,
-      opts = mode.opts,
+  for name, agent in pairs(loaded_agents) do
+    agents_module.register(name, {
+      type = agent.type,
+      name = agent.name,
+      description = agent.description,
+      tools = agent.tools,
+      permissions = agent.permissions,
+      system_prompt = agent.system_prompt,
+      opts = agent.opts,
     })
     count = count + 1
   end
@@ -178,14 +188,14 @@ function M.register_from_dir(dir)
   return count
 end
 
----Get default modes directory path
+---Get default agents directory path
 ---@return string
 function M.default_dir()
-  return vim.fs.joinpath(vim.fn.stdpath("config"), "codecompanion", "modes")
+  return vim.fs.joinpath(vim.fn.stdpath("config"), "codecompanion", "agents")
 end
 
----Load modes from default directory
----@return number count Number of modes registered
+---Load agents from default directory
+---@return number count Number of agents registered
 function M.load_default()
   return M.register_from_dir(M.default_dir())
 end
