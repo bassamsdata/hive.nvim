@@ -1,6 +1,6 @@
 -- CodeCompanion Extension: extra
 -- Entry point for codecompanion-extra integration with CodeCompanion's extension system
--- Provides: spinner, adapters (groq, cerebras, openrouter), tools (get_diagnostics), and modes
+-- Provides: spinner, adapters (groq, cerebras, openrouter), tools (get_diagnostics, task), and agents
 
 local M = {}
 
@@ -30,6 +30,7 @@ function M.setup(opts)
 
   M._register_adapters()
   M._register_tools()
+  M._register_agents()
 
   M._initialized = true
 end
@@ -45,24 +46,15 @@ function M._register_adapters()
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
 
-  -- Ensure config.adapters.http exists
   if not cc_config.adapters then cc_config.adapters = {} end
   if not cc_config.adapters.http then cc_config.adapters.http = {} end
 
   local adapter_config = config_module.get().adapters or {}
 
-  -- Register each extra adapter into config.adapters.http
-  -- The adapter files are complete (they extend OpenAI internally)
-  -- so we register them as strings - CodeCompanion will require("codecompanion.adapters.http." .. name)
   for name, _ in pairs(M.extra_adapters) do
     local config = adapter_config[name] or {}
     if config.enabled ~= false then
-      -- Only register if not already defined by user
-      if cc_config.adapters.http[name] == nil then
-        -- Register as string - the adapter file returns a complete adapter
-        -- that already has OpenAI's handlers merged in
-        cc_config.adapters.http[name] = name
-      end
+      if cc_config.adapters.http[name] == nil then cc_config.adapters.http[name] = name end
     end
   end
 end
@@ -94,6 +86,16 @@ function M._register_tools()
       end
     end
   end
+end
+
+---Register agents module
+function M._register_agents()
+  local config_module = require("codecompanion-extra.config")
+  if not config_module.is_module_enabled("agents") then return end
+
+  local agents_config = config_module.get().agents or {}
+  local agents = require("codecompanion-extra.agents")
+  agents.setup(agents_config)
 end
 
 ---@type CodeCompanion.Extension
@@ -138,18 +140,18 @@ return {
       return require("codecompanion-extra").tool(name)
     end,
 
-    ---Get modes module
+    ---Get agents module
     ---@return table
-    modes = function()
-      return require("codecompanion-extra").modes()
+    agents = function()
+      return require("codecompanion-extra").agents()
     end,
 
-    ---Activate a mode
-    ---@param mode_name string
+    ---Activate an agent
+    ---@param agent_name string
     ---@param chat table
     ---@return boolean
-    activate_mode = function(mode_name, chat)
-      return require("codecompanion-extra.modes").activate(mode_name, chat)
+    activate_agent = function(agent_name, chat)
+      return require("codecompanion-extra.agents").activate(agent_name, chat)
     end,
 
     ---Get spinner module

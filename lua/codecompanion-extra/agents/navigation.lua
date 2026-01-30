@@ -35,14 +35,6 @@ local function build_winbar(bufnr)
       table.insert(parts, fmt("%%#Comment#↑ %s%%*", parent_name))
     end
 
-    local icon = ({
-      explorer = "🔍",
-      general = "📋",
-      analyzer = "📊",
-      build = "🔨",
-      plan = "📝",
-    })[session.agent_name] or "🤖"
-
     local status_hl = ({
       running = "WarningMsg",
       completed = "DiagnosticOk",
@@ -51,24 +43,12 @@ local function build_winbar(bufnr)
     })[session.status] or "Normal"
 
     local type_label = session.agent_type == "subagent" and "Subagent" or "Agent"
-    table.insert(parts, fmt("%%#%s#%s %s: %s%%*", status_hl, icon, type_label, session.agent_name))
+    table.insert(parts, fmt("%%#%s#%s: %s%%*", status_hl, type_label, session.agent_name))
 
     local children = hierarchy.get_children(bufnr)
-    if #children > 0 then
-      local active = hierarchy.count_active_children(bufnr)
-      table.insert(parts, fmt("%%#Comment#↓ %d subagents%%*", #children))
-    end
+    if #children > 0 then table.insert(parts, fmt("%%#Comment#↓ %d subagents%%*", #children)) end
   elseif agent_name then
-    local agent = agents.get(agent_name)
-    local icon = ({
-      explorer = "🔍",
-      general = "📋",
-      analyzer = "📊",
-      build = "🔨",
-      plan = "📝",
-    })[agent_name] or "🤖"
-
-    table.insert(parts, fmt("%s Agent: %s", icon, agent_name))
+    table.insert(parts, fmt("Agent: %s", agent_name))
   end
 
   if #parts == 0 then return nil end
@@ -105,8 +85,20 @@ end
 
 ---Setup winbar tracking for a chat buffer
 ---@param bufnr number
-function M.setup_winbar(bufnr)
-  if M._winbar_state[bufnr] then return end
+---@param force? boolean Force re-setup even if already set up
+function M.setup_winbar(bufnr, force)
+  if M._winbar_state[bufnr] and not force then
+    -- Already set up, just refresh
+    vim.schedule(function()
+      update_winbar(bufnr)
+    end)
+    return
+  end
+
+  -- Clear existing state if forcing
+  if force and M._winbar_state[bufnr] then
+    if M._winbar_state[bufnr].autocmd_id then pcall(vim.api.nvim_del_autocmd, M._winbar_state[bufnr].autocmd_id) end
+  end
 
   M._winbar_state[bufnr] = { winbar_set = true }
 

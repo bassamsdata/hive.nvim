@@ -36,15 +36,17 @@ M.agents = {
       "read_file",
       "grep_search",
       "file_search",
-      "list_code_usages",
       "get_changed_files",
       "insert_edit_into_file",
       "create_file",
       "delete_file",
       "cmd_runner",
       "get_diagnostics",
-      -- "task",
-      "batch_task",
+      "task",
+      "skill",
+      "ask_user",
+      "fetch_webpage",
+      "web_search",
     },
     permissions = {
       can_spawn_subagents = true,
@@ -70,13 +72,14 @@ TOOL USAGE:
 - Use cmd_runner for shell commands (tests, builds, git)
 - Use get_diagnostics after edits to catch errors
 - Fix errors up to 3 attempts, then ask user for help
-- Use task tool to delegate exploration or analysis to subagents
 
 SUBAGENT DELEGATION:
-- Use 'task' for a single subagent (runs sequentially)
-- Use 'batch_task' for 2+ independent tasks (runs in PARALLEL)
-- Available subagents: 'explorer' (codebase search), 'analyzer' (diagnostics), 'general' (research)
-- Example: batch_task with explorer + analyzer to search code AND check errors simultaneously
+Use the task tool to delegate exploration or analysis work to specialized subagents.
+- Available subagents: Explorer (codebase search), Analyzer (diagnostics), General (research)
+- Use 1 subagent when the task is isolated or you're making a targeted change
+- Use multiple subagents IN PARALLEL when: scope is uncertain, multiple areas are involved, or you need to understand patterns
+- To run parallel: include multiple tasks in one tool call: { "tasks": [{ task1 }, { task2 }] }
+- Quality over quantity - use the minimum number of subagents necessary
 
 RULES:
 - NEVER print code blocks for changes - use the edit tools directly
@@ -102,10 +105,11 @@ You are using: ]] .. adapter_name
       "read_file",
       "grep_search",
       "file_search",
-      "list_code_usages",
       "get_changed_files",
       "task",
-      "batch_task",
+      "skill",
+      "ask_user",
+      "list_directory",
     },
     permissions = {
       can_spawn_subagents = true,
@@ -120,20 +124,25 @@ In this mode you should:
 - Search for patterns, usages, and dependencies
 - Analyze code flow and architecture
 - Provide detailed explanations and recommendations
+- Use list_directory to explore directory structure
 
 SUBAGENT DELEGATION:
-- Use 'task' for a single subagent task (sequential)
-- Use 'batch_task' for 2+ independent tasks (PARALLEL execution)
-- Available subagents: 'explorer' (search), 'analyzer' (diagnostics), 'general' (research)
-- Parallel exploration is faster: use batch_task to search multiple areas at once
+Use the task tool to launch subagents for efficient codebase exploration:
+1. Use 1 subagent when: the task is isolated to known files, user provided specific paths, or you're doing targeted research.
+2. Use up to 3 subagents IN PARALLEL (single tool call) when: scope is uncertain, multiple areas are involved, or you need to understand existing patterns.
+   - Provide each subagent with a specific search focus or area to explore
+   - Example: One searches for implementations, another explores related components, a third investigates tests
+3. Quality over quantity - use the minimum number of subagents necessary (usually just 1).
+
+Available subagents: Explorer (codebase search), Analyzer (diagnostics), General (research)
 
 You do NOT have access to file modification tools. Focus on understanding and planning.
 When you have a complete understanding, recommend switching to BUILD mode to implement changes.]],
     opts = {
-      include_default_system_prompt = true,
+      include_default_system_prompt = false,
       include_tools_system_prompt = true,
-      auto_submit_errors = false,
-      auto_submit_success = false,
+      auto_submit_errors = true,
+      auto_submit_success = true,
     },
   },
 
@@ -145,7 +154,7 @@ When you have a complete understanding, recommend switching to BUILD mode to imp
       "read_file",
       "grep_search",
       "file_search",
-      "list_code_usages",
+      "list_directory",
     },
     permissions = {
       can_spawn_subagents = false,
@@ -160,7 +169,7 @@ BEHAVIOR:
 - Use grep_search to find patterns across files
 - Use file_search to locate files by name
 - Use read_file to examine file contents
-- Use list_code_usages to find symbol references
+- Use list_directory to explore directory structure
 
 OUTPUT:
 - Summarize your findings clearly and concisely
@@ -173,7 +182,7 @@ Do NOT make changes. Only explore and report.]],
       include_default_system_prompt = false,
       include_tools_system_prompt = true,
       hidden = true,
-      auto_submit_errors = false,
+      auto_submit_errors = true,
       auto_submit_success = true,
     },
   },
@@ -228,7 +237,8 @@ Focus on information gathering, not modifications.]],
       "read_file",
       "grep_search",
       "get_diagnostics",
-      "list_code_usages",
+      "file_search",
+      "list_directory",
     },
     permissions = {
       can_spawn_subagents = false,
@@ -242,6 +252,7 @@ CAPABILITIES:
 - Get LSP diagnostics (errors, warnings)
 - Find code usages and references
 - Search for patterns
+- Use list_directory to explore directory structure
 
 BEHAVIOR:
 - Analyze code for issues, patterns, and improvements
@@ -260,7 +271,7 @@ Provide detailed, actionable analysis.]],
       include_default_system_prompt = false,
       include_tools_system_prompt = true,
       hidden = true,
-      auto_submit_errors = false,
+      auto_submit_errors = true,
       auto_submit_success = true,
     },
   },

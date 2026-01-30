@@ -1,14 +1,24 @@
--- Config module for codecompanion-extra
--- Handles configuration defaults and merging
-
 local M = {}
 
 ---@class CodeCompanionExtra.Config
----@field modules table Module enable/disable settings
+---@field modules table<string, { enabled: boolean }>
 ---@field spinner table Spinner configuration
----@field adapters table Adapter configurations
----@field tools table Tool configurations
----@field modes table Mode definitions
+---@field adapters table<string, { enabled: boolean }> Adapter configurations
+---@field tools table<string, { enabled: boolean, opts?: table }> Tool configurations
+---@field agents CodeCompanionExtra.AgentsConfig Agent system configuration
+---@field skills CodeCompanionExtra.SkillsConfig Skills system configuration
+
+---@class CodeCompanionExtra.AgentsConfig
+---@field keymap? { switch?: table<string, string> } Keymap configuration
+---@field definitions? table<string, CodeCompanionExtra.Agent> Custom agent definitions
+---@field load_from_dir? string Directory to load agents from markdown files
+---@field small_model? string Model for subagents in format "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.codecompanion_small_model
+
+---@class CodeCompanionExtra.SkillsConfig
+---@field enabled boolean Enable skills support
+---@field directories string[] Additional directories to scan for skills
+---@field scan_to_git_root boolean Scan up to .git boundary
+---@field recursive boolean Scan subdirectories recursively
 
 ---@type CodeCompanionExtra.Config
 M.defaults = {
@@ -16,12 +26,14 @@ M.defaults = {
     spinner = { enabled = true },
     adapters = { enabled = true },
     tools = { enabled = true },
-    modes = { enabled = true },
+    agents = { enabled = true },
+    skills = { enabled = true },
+    list_directory = { enabled = true },
   },
 
   spinner = {
     spinner = {
-      frames = "binary",
+      frames = "slide_bar",
       interval = 80,
     },
     display = {
@@ -47,103 +59,86 @@ M.defaults = {
 
   tools = {
     get_diagnostics = { enabled = true },
+    task = { enabled = true },
+    ask_user = { enabled = true },
+    skill = { enabled = true },
   },
 
-  modes = {
-    -- Single keymap for mode switching (toggles if 2 modes, select if more)
-    -- Note: gm is often used for change_model, gM for clear_rules, so we use gO (mOde)
+  agents = {
+    -- Keymap for agent switching (toggles if 2 agents, select if more)
     keymap = {
-      modes = { n = "gO" },
-      index = 50,
-      description = "[Mode] Switch mode",
+      switch = { n = "gO" },
+      -- Navigation keymaps are registered automatically:
+      -- ]s - next subagent
+      -- [s - prev subagent
+      -- [p - parent agent
+      -- gs - list subagents
     },
 
-    definitions = {
-      -- Plan mode: Read-only research and analysis
-      plan = {
-        description = "Research and analyze before coding (read-only)",
-        tools = {
-          "read_file",
-          "grep_search",
-          "file_search",
-          "list_code_usages",
-          "get_changed_files",
-        },
-        system_prompt = [[You are in PLAN mode. Your task is to research, analyze, and understand code before any modifications.
+    -- Model for subagents. Format: "adapter/model" or "adapter/provider/model"
+    -- Examples:
+    --   "openai/gpt-4o-mini"          -> adapter: openai, model: gpt-4o-mini
+    --   "openrouter/openai/gpt-4o"    -> adapter: openrouter, model: openai/gpt-4o
+    -- If nil, subagents inherit adapter/model from parent chat.
+    -- Can be overridden at runtime via vim.g.codecompanion_small_model
+    small_model = nil,
 
-In this mode you should:
-- Explore the codebase structure
-- Read relevant files and understand their purpose
-- Search for patterns, usages, and dependencies
-- Analyze code flow and architecture
-- Provide detailed explanations and recommendations
+    -- Override built-in agents or add custom ones
+    -- Built-in agents: build, plan (primary), explorer, general, analyzer (subagents)
+    definitions = {},
 
-You do NOT have access to file modification tools. Focus on understanding and planning.
-When you have a complete understanding, recommend switching to BUILD mode to implement changes.]],
-        opts = {
-          include_default_system_prompt = true,
-          include_tools_system_prompt = true,
-          auto_submit_errors = false,
-          auto_submit_success = false,
-        },
-      },
+    -- Load agents from markdown directory
+    load_from_dir = nil,
+  },
 
-      -- Build mode: Full autonomous coding agent
-      build = {
-        description = "Autonomous coding with full tool access",
-        tools = {
-          "read_file",
-          "grep_search",
-          "file_search",
-          "list_code_usages",
-          "get_changed_files",
-          "insert_edit_into_file",
-          "create_file",
-          "delete_file",
-          "cmd_runner",
-          "get_diagnostics",
-        },
-        system_prompt = function(chat)
-          local adapter_name = "unknown"
-          if chat and chat.adapter then adapter_name = chat.adapter.formatted_name or chat.adapter.name or "unknown" end
-
-          return [[You are in BUILD mode - an autonomous coding agent with full tool access.
-
-CORE BEHAVIOR:
-- You are a highly sophisticated automated coding agent
-- Take action immediately - don't ask for permission to use tools
-- Keep going until the task is fully complete
-- After every file edit, use get_diagnostics to verify no syntax errors
-
-TOOL USAGE:
-- Read files before editing to understand current state
-- Use insert_edit_into_file for modifications (preserve indentation)
-- Use create_file for new files
-- Use cmd_runner for shell commands (tests, builds, git)
-- Use get_diagnostics after edits to catch errors
-- Fix errors up to 3 attempts, then ask user for help
-
-RULES:
-- NEVER print code blocks for changes - use the edit tools directly
-- NEVER print shell commands - use cmd_runner directly
-- NEVER say tool names to users
-- Always use file paths exactly as provided
-
-You are using: ]] .. adapter_name
-        end,
-        opts = {
-          include_default_system_prompt = false,
-          include_tools_system_prompt = true,
-          auto_submit_errors = true,
-          auto_submit_success = true,
-        },
-      },
-    },
+  skills = {
+    -- Enable skills support
+    enabled = true,
+    -- Additional directories to scan for skills
+    -- Default scans: .codecompanion/skills/, .claude/skills/ (project & user level)
+    directories = {},
+    -- Scan from cwd up to .git boundary for skills
+    scan_to_git_root = true,
+    -- Scan subdirectories recursively (opt-in)
+    recursive = false,
   },
 }
 
 ---@type CodeCompanionExtra.Config
 M.config = vim.deepcopy(M.defaults)
+
+---Parse model string in format "adapter/model" or "adapter/provider/model"
+---@param model_str string|nil The model string to parse
+---@return { adapter: string, model: string }|nil Parsed adapter and model, or nil if invalid
+function M.parse_model_string(model_str)
+  if not model_str or model_str == "" then return nil end
+
+  local parts = vim.split(model_str, "/", { plain = true })
+  if #parts == 2 then
+    -- Format: "openai/gpt-4o-mini" -> adapter: openai, model: gpt-4o-mini
+    return { adapter = parts[1], model = parts[2] }
+  elseif #parts >= 3 then
+    -- Format: "openrouter/openai/gpt-4o" -> adapter: openrouter, model: openai/gpt-4o
+    return { adapter = parts[1], model = table.concat(vim.list_slice(parts, 2), "/") }
+  end
+
+  return nil
+end
+
+---Get the small model configuration for subagents
+---Priority: vim.g.codecompanion_small_model > config.agents.small_model > nil (inherit from parent)
+---@return { adapter: string, model: string }|nil
+function M.get_small_model()
+  -- Check vim.g override first
+  local global_override = vim.g.codecompanion_small_model
+  if global_override then return M.parse_model_string(global_override) end
+
+  -- Check config
+  local config_model = M.config.agents and M.config.agents.small_model
+  if config_model then return M.parse_model_string(config_model) end
+
+  return nil
+end
 
 ---Merge user config with defaults
 ---@param user_opts table?

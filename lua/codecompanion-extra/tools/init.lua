@@ -8,6 +8,18 @@ M.tools = {
   get_diagnostics = function()
     return require("codecompanion-extra.tools.get_diagnostics")
   end,
+  task = function()
+    return require("codecompanion-extra.tools.task")
+  end,
+  ask_user = function()
+    return require("codecompanion-extra.tools.ask_user")
+  end,
+  skill = function()
+    return require("codecompanion-extra.tools.skill")
+  end,
+  list_directory = function()
+    return require("codecompanion-extra.tools.list_directory")
+  end,
 }
 
 ---Get a tool definition

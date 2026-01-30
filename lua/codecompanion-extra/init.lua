@@ -1,6 +1,6 @@
 -- codecompanion-extra
 -- Extra features for CodeCompanion.nvim
--- Provides: spinner, adapters (groq, cerebras, openrouter), tools (get_diagnostics), and modes
+-- Provides: spinner, adapters (groq, cerebras, openrouter), tools (get_diagnostics, task, ask_user, skill), agents, and skills
 
 local M = {}
 
@@ -31,9 +31,14 @@ function M._setup_modules()
     spinner.setup(M._config.spinner)
   end
 
-  if config.is_module_enabled("modes") then
-    local modes = require("codecompanion-extra.modes")
-    modes.setup(M._config.modes)
+  if config.is_module_enabled("skills") then
+    local skills = require("codecompanion-extra.skills")
+    skills.setup(M._config.skills)
+  end
+
+  if config.is_module_enabled("agents") then
+    local agents = require("codecompanion-extra.agents")
+    agents.setup(M._config.agents)
   end
 end
 
@@ -46,7 +51,7 @@ end
 ---Get a specific adapter table by name
 ---These are plain tables that should be used with require("codecompanion.adapters").extend()
 ---
----TODO:Add to README
+---TODO:MOVE to README, once created
 ---Example usage in codecompanion setup:
 ---```lua
 ---adapters = {
@@ -93,16 +98,22 @@ function M.tool(name)
   return tools_module.get(name)
 end
 
----Get modes module
----@return table Modes module
-function M.modes()
-  return require("codecompanion-extra.modes")
+---Get agents module
+---@return table Agents module
+function M.agents()
+  return require("codecompanion-extra.agents")
 end
 
 ---Get spinner module
 ---@return table Spinner module
 function M.spinner()
   return require("codecompanion-extra.spinner")
+end
+
+---Get skills module
+---@return table Skills module
+function M.skills()
+  return require("codecompanion-extra.skills")
 end
 
 ---Check if initialized

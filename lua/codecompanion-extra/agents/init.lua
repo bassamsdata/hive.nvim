@@ -42,7 +42,7 @@ function M.setup(config)
   M._setup_keymap()
   M._setup_navigation()
   M._setup_chat_events()
-  M._register_task_tool()
+  M._register_extra_tools()
 end
 
 ---Register each agent as a tool group in codecompanion config
@@ -129,9 +129,9 @@ function M._setup_navigation()
   navigation.setup()
 end
 
----Register task and batch_task tools for spawning subagents
+---Register extra tools (task, ask_user, skill) globally
 ---@private
-function M._register_task_tool()
+function M._register_extra_tools()
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
 
@@ -142,17 +142,38 @@ function M._register_task_tool()
   chat_tools["task"] = {
     callback = task_tool,
     description = task_tool.schema and task_tool.schema["function"] and task_tool.schema["function"].description
-      or "Spawn a subagent for delegated tasks",
+      or "Delegate tasks to specialized subagents (single or parallel)",
     opts = {},
   }
 
-  local batch_task_tool = require("codecompanion-extra.tools.batch_task")
-  chat_tools["batch_task"] = {
-    callback = batch_task_tool,
-    description = batch_task_tool.schema
-        and batch_task_tool.schema["function"]
-        and batch_task_tool.schema["function"].description
-      or "Spawn multiple subagents in parallel",
+  local ask_user_tool = require("codecompanion-extra.tools.ask_user")
+  chat_tools["ask_user"] = {
+    callback = ask_user_tool,
+    description = ask_user_tool.schema
+        and ask_user_tool.schema["function"]
+        and ask_user_tool.schema["function"].description
+      or "Ask the user clarifying questions",
+    opts = {},
+  }
+
+  local skills = require("codecompanion-extra.skills")
+  if skills.has_skills() then
+    local skill_tool = require("codecompanion-extra.tools.skill")
+    chat_tools["skill"] = {
+      callback = skill_tool,
+      description = skill_tool.schema and skill_tool.schema["function"] and skill_tool.schema["function"].description
+        or "Load specialized skill instructions",
+      opts = {},
+    }
+  end
+
+  local list_dir_tool = require("codecompanion-extra.tools.list_directory")
+  chat_tools["list_directory"] = {
+    callback = list_dir_tool,
+    description = list_dir_tool.schema
+        and list_dir_tool.schema["function"]
+        and list_dir_tool.schema["function"].description
+      or "List contents of a directory",
     opts = {},
   }
 end
@@ -316,7 +337,7 @@ function M.activate(agent_name, chat, opts)
   if not opts.silent and not is_subagent then vim.notify(fmt("Agent: %s", agent_name), vim.log.levels.INFO) end
 
   local navigation = require("codecompanion-extra.agents.navigation")
-  navigation.setup_winbar(chat.bufnr)
+  navigation.setup_winbar(chat.bufnr, true)
 
   return true
 end

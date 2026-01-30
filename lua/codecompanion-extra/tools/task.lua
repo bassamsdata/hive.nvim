@@ -181,7 +181,10 @@ local function render_batch_status(batch, status_text)
   pcall(vim.api.nvim_buf_set_extmark, parent_chat.bufnr, ns_id, target_line, 0, {
     virt_lines = virt_lines,
     virt_lines_above = false,
+    virt_lines_leftcol = true,
     priority = 100,
+    right_gravity = false,
+    end_right_gravity = false,
   })
 end
 

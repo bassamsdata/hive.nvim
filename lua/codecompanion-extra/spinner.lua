@@ -19,7 +19,6 @@
 ===============================================================================
 --]]
 
-
 ---TODO:
 ---1. enhance bug when the timer turns into minutes, the seconds, lose the highilights.
 ---2. add final timer when complete/cancel/error meaning this is total time of full request.
@@ -68,6 +67,7 @@ local CONSTANTS = {
     moon          = { "🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘" },
     minimal       = { ".", "..", "..." },
     bars          = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂" },
+    slide_bar     = { "===     ", " ===    ", "  ===   ", "   ===  ", "  ===   ", " ===    " },
     bounce        = {
       "⠁", "⠁", "⠉", "⠙", "⠚", "⠒", "⠂", "⠂", "⠒", "⠲", "⠴", "⠤", "⠄", "⠄", "⠤", "⠠",
       "⠠", "⠤", "⠦", "⠖", "⠒", "⠐", "⠐", "⠒", "⠓", "⠋", "⠉", "⠈", "⠈",
@@ -93,6 +93,7 @@ local DEFAULT_CONFIG = {
   spinner = {
     frames = CONSTANTS.SPINNER_FRAMES.binary,
     interval = CONSTANTS.SPINNER_INTERVAL,
+    brackets = false,
   },
   display = {
     show_model = true,
@@ -351,6 +352,9 @@ end
 function Spinner:_build_display_content()
   local lines = {}
   local spinner_char = self.config.spinner.frames[self.state.frame]
+
+  -- Apply brackets if configured
+  if self.config.spinner.brackets then spinner_char = "[" .. spinner_char .. "]" end
 
   -- Line 1: Adapter/Model/Provider info (ALWAYS show if available)
   local adapter_info = self:_format_adapter_info()

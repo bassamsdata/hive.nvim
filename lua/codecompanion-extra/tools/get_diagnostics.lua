@@ -20,9 +20,12 @@
 ===============================================================================
 --]]
 
+---BUG: I'm getting some false-positive from solow LSPs or big files.
+---I think we need to do something, maybe make the first time and second time we retirieve
+---a bit longer.
 
 local Path = require("plenary.path")
-local helpers = require("codecompanion.interactions.chat.helpers")
+local helpers = require("codecompanion.utils.files")
 local log = require("codecompanion.utils.log")
 local tool_helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
 
