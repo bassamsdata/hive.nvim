@@ -1,0 +1,23 @@
+deps/
+AGENTS.md
+bugs/
+
+# Lua
+*.luac
+.luarocks/
+
+.repro
+
+# Editors
+*.swp
+*.swo
+.netrwhist
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.TemporaryItems
+.Trashes
