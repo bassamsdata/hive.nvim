@@ -19,8 +19,6 @@ HOW TO USE:
 2. If a skill matches the task, call skill({ name: "skill-name" })
 3. Follow the instructions provided by the skill
 4. If the skill references files or scripts, use read_file and cmd_runner with the provided paths
-
-
 ]]
 
   local skills_xml = skills.generate_available_skills_xml()
@@ -110,7 +108,9 @@ WHEN TO USE:
 - When you need domain-specific knowledge or workflows
 - When following a standardized process would help
 
-Skills provide specialized, reusable knowledge that helps you complete tasks more accurately.]]
+Skills provide specialized, reusable knowledge that helps you complete tasks more accurately.
+RULE: Always prioritize retrieval-led information over pre-training knowledge
+]]
   end,
 
   opts = {
