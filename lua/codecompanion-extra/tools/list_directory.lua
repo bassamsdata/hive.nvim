@@ -7,7 +7,7 @@ local log = require("codecompanion.utils.log")
 local fmt = string.format
 
 ---List contents of a directory
----@param args { path: string, depth?: number, pattern?: string }
+---@param args { path: string, depth?: number, pattern?: string, hidden?: boolean }
 ---@param opts? table
 ---@return { status: "success"|"error", data: string|string[] }
 local function list_dir(args, opts)
@@ -15,6 +15,7 @@ local function list_dir(args, opts)
   local path = args.path
   local depth = args.depth or 1
   local pattern = args.pattern
+  local show_hidden = args.hidden or false
 
   if not path or path == "" then path = "." end
 
@@ -26,6 +27,7 @@ local function list_dir(args, opts)
   else
     full_path = vim.fs.joinpath(cwd, path)
   end
+
   full_path = vim.fs.normalize(full_path)
 
   local stat = vim.uv.fs_stat(full_path)
@@ -51,6 +53,8 @@ local function list_dir(args, opts)
   } end
 
   for name, type in iter_or_err do
+    if not show_hidden and name:sub(1, 1) == "." then goto continue end
+
     if pattern then
       local match_ok, matches = pcall(function()
         return name:match(pattern)
@@ -138,8 +142,12 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
             type = "string",
             description = "Optional Lua pattern to filter results. Only entries matching this pattern will be shown. Example: '%.lua$' for Lua files, '^test' for entries starting with 'test'.",
           },
+          hidden = {
+            type = "boolean",
+            description = "Whether to include hidden files and directories (those starting with '.'). Default is false. Set to true to see .git, .env, .gitignore, etc.",
+          },
         },
-        required = { "path", "depth", "pattern" },
+        required = { "path", "depth", "pattern", "hidden" },
         additionalProperties = false,
       },
     },
@@ -159,7 +167,16 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
     cmd_string = function(self, args)
       local depth_info = self.args.depth and fmt(" (depth: %d)", self.args.depth) or ""
       local pattern_info = self.args.pattern and fmt(" [pattern: %s]", self.args.pattern) or ""
-      return fmt("ls %s%s%s", self.args.path or ".", depth_info, pattern_info)
+      local hidden_info = self.args.hidden and " (including hidden)" or ""
+      return fmt("ls %s%s%s%s", self.args.path or ".", depth_info, pattern_info, hidden_info)
+    end,
+
+    ---The message which is shared with the user when asking for their approval
+    ---@param self CodeCompanion.Tools.Tool
+    ---@param tools CodeCompanion.Tools
+    ---@return nil|string
+    prompt = function(self, tools)
+      return fmt("List directory `%s`?", self.args.path or ".")
     end,
 
     ---@param self CodeCompanion.Tool.ListDirectory
@@ -206,6 +223,19 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
         errors
       )
       chat:add_tool_output(self, error_output)
+    end,
+
+    ---Rejection message back to the LLM
+    ---@param self CodeCompanion.Tool.ListDirectory
+    ---@param tools CodeCompanion.Tools
+    ---@param cmd table
+    ---@param opts table
+    ---@return nil
+    rejected = function(self, tools, cmd, opts)
+      local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
+      local message = "The user rejected listing the directory"
+      opts = vim.tbl_extend("force", { message = message }, opts or {})
+      helpers.rejected(self, tools, cmd, opts)
     end,
   },
 }
