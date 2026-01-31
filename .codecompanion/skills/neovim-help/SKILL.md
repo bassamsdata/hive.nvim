@@ -1,18 +1,23 @@
 ---
 name: neovim-help
-description: Extracts a specific Neovim help section programmatically from the command line, given a Lua help topic like "vim.diagnostic.get". Use when you want to retrieve precise Neovim API help without dumping the full help file.
+description: Extracts a specific Neovim documentation/help section programmatically from the command line, given a Lua help topic like "vim.diagnostic.get" or "wrap". Use when you want utlizie neovim API and want precise Neovim API docs without dumping the full help file.
 ---
 
 # neovim-help
 
 ## When to use this skill
-Use this skill when the user asks for help on a specific Neovim Lua API
-function or help tag and expects only the relevant formatted documentation
-section, not the entire help file.
+- When you need details on a Neovim Lua API.
+- When you are unsure about using a function.
+- When the user asks for documentation.
+- Retrieve the exact Neovim API documentation needed for correct usage.
 
 ## How to use
 
 Given a help topic (e.g., `vim.diagnostic.get`), run the following script:
+you can use it with everything in neovim docs. Examples:
+- 'wrap" -- for options
+- "vim.system"
+- "find" -- for functions start with vim.fn.fnid
 
 ```bash
 neovim-help.sh "<help-topic>"
