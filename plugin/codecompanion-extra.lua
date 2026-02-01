@@ -242,7 +242,7 @@ local function ccextra_cmd(opts)
     end
     table.insert(lines, "")
     table.insert(lines, "Usage: :CCExtra <subcommand> [args]")
-    table.insert(lines, "       :CCExtra agent! [name]  - Create new chat with agent")
+    table.insert(lines, "       :CCExtra! agent [name]  - Create new chat with agent")
     vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
     return
   end
