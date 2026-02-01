@@ -331,6 +331,8 @@ function M.activate(agent_name, chat, opts)
       description = agent.description,
       hidden = agent.opts and agent.opts.hidden or false,
     })
+  else
+    hierarchy.update_session_agent(chat.bufnr, agent_name, agent.type)
   end
 
   local is_subagent = agent.type == "subagent"

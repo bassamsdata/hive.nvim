@@ -105,6 +105,18 @@ function M.get_parent(child_bufnr)
   return session and session.parent_bufnr
 end
 
+---Update agent information for an existing session
+---@param bufnr number
+---@param agent_name string
+---@param agent_type CodeCompanionExtra.AgentType
+function M.update_session_agent(bufnr, agent_name, agent_type)
+  local session = M._sessions[bufnr]
+  if session then
+    session.agent_name = agent_name
+    session.agent_type = agent_type
+  end
+end
+
 ---Get all sibling sessions (same parent)
 ---@param bufnr number
 ---@return number[]
