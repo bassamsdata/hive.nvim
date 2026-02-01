@@ -1,3 +1,4 @@
+local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
 local log = require("codecompanion.utils.log")
 
 local api = vim.api
@@ -14,6 +15,8 @@ local fmt = string.format
 ---@class AskUserForm
 ---@field bufnr number
 ---@field winnr number
+---@field context_bufnr? number
+---@field context_winnr? number
 ---@field ns_id number
 ---@field width number
 ---@field height number
@@ -34,7 +37,7 @@ local HL = {
   REQUIRED = "DiagnosticError",
   INPUT = "Normal",
   HEADER = "Title",
-  CONTEXT = "Comment",
+  CONTEXT = "Normal",
   SEPARATOR = "Comment",
   CURRENT = "CursorLine",
   WINBAR_KEY = "Comment",
@@ -67,6 +70,41 @@ function AskUserForm.new(args)
   end
 
   return self
+end
+
+---Create a buffer and window with standard options
+---@param config table
+---@return { bufnr: number, winnr: number }
+function AskUserForm:_create_window(config)
+  local bufnr = api.nvim_create_buf(false, true)
+  api.nvim_set_option_value("buftype", "nofile", { buf = bufnr })
+  api.nvim_set_option_value("bufhidden", "wipe", { buf = bufnr })
+  api.nvim_set_option_value("swapfile", false, { buf = bufnr })
+  api.nvim_buf_set_name(bufnr, config.name)
+  vim.b[bufnr].miniindentscope_disable = true
+
+  if config.filetype then api.nvim_set_option_value("filetype", config.filetype, { buf = bufnr }) end
+
+  local winnr = api.nvim_open_win(bufnr, config.focusable, {
+    relative = "editor",
+    width = config.width,
+    height = config.height,
+    row = config.row,
+    col = config.col,
+    style = "minimal",
+    border = config.border or "none",
+    title = config.title,
+    title_pos = config.title_pos,
+    focusable = config.focusable,
+  })
+
+  if config.winhighlight then api.nvim_set_option_value("winhighlight", config.winhighlight, { win = winnr }) end
+
+  api.nvim_set_option_value("wrap", true, { win = winnr })
+
+  api.nvim_set_option_value("cursorline", false, { win = winnr })
+
+  return { bufnr = bufnr, winnr = winnr }
 end
 
 ---Build a horizontal line with box characters
@@ -115,7 +153,36 @@ function AskUserForm:_fit_text(text, width, prefix)
   return prefix .. text .. suffix
 end
 
----Build the form content for display
+---Calculate context window height based on content
+---@return number
+function AskUserForm:_get_context_height()
+  if not self.context then return 0 end
+  local width = self.width - 2 -- account for padding/border
+  local lines = vim.split(self.context, "\n")
+  local height = 0
+  for _, line in ipairs(lines) do
+    height = height + math.max(1, math.ceil(vim.fn.strdisplaywidth(line) / width))
+  end
+  return math.min(height, 5)
+end
+
+---Build context buffer content
+---@return string[] lines
+---@return table[] highlights
+function AskUserForm:_build_context_content()
+  if not self.context then return {}, {} end
+
+  local lines = vim.split(self.context, "\n")
+  local highlights = {}
+
+  for i = 0, #lines - 1 do
+    table.insert(highlights, { i, 0, -1, HL.CONTEXT })
+  end
+
+  return lines, highlights
+end
+
+---Build the form content for display (questions only, context is in extmark)
 ---@return string[] lines
 ---@return {line: number, col_start: number, col_end: number, hl_group: string}[] highlights
 function AskUserForm:_build_content()
@@ -130,17 +197,6 @@ function AskUserForm:_build_content()
     local line_idx = #lines - 1
     self.line_map[line_idx] = line_info or { type = "other" }
     if hl_group then table.insert(highlights, { line_idx, 0, -1, hl_group }) end
-  end
-
-  if self.context then
-    add_line(self:_build_line(width, "┌", "┐", "─", "Context"), HL.HEADER, { type = "header" })
-
-    for _, ctx_line in ipairs(vim.split(self.context, "\n")) do
-      add_line(self:_fit_text(ctx_line, width), HL.CONTEXT, { type = "context" })
-    end
-
-    add_line(self:_build_line(width, "└", "┘", "─"), HL.HEADER, { type = "header" })
-    add_line("", nil, { type = "spacer" })
   end
 
   for i, q in ipairs(self.questions) do
@@ -258,10 +314,13 @@ function AskUserForm:render()
   ---@type table[]  -- highlights: {line, col_start, col_end, hl_group}
   local lines, highlights = self:_build_content()
 
+  -- Filter newlines from lines to prevent nvim_buf_set_lines errors
+  -- Some LLM outputs may contain embedded newlines in individual lines
+  for i, line in ipairs(lines) do
+    lines[i] = line:gsub("\n", " ")
+  end
+
   api.nvim_set_option_value("modifiable", true, { buf = self.bufnr })
-  -- BUG: Some LLM outputs contain newline characters in individual lines, causing
-  --      nvim_buf_set_lines to fail with error: 'replacement string' item contains newlines
-  --      We need to pre-filter here.
   api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
   api.nvim_set_option_value("modifiable", false, { buf = self.bufnr })
   api.nvim_buf_clear_namespace(self.bufnr, self.ns_id, 0, -1)
@@ -272,6 +331,30 @@ function AskUserForm:render()
     if col_end == -1 then col_end = #lines[line + 1] end
     pcall(api.nvim_buf_add_highlight, self.bufnr, self.ns_id, hl_group, line, col_start, col_end)
   end
+
+  -- Render context in separate buffer if it exists
+  if self.context and self.context_bufnr and api.nvim_buf_is_valid(self.context_bufnr) then
+    local ctx_lines, ctx_highlights = self:_build_context_content()
+
+    -- Filter newlines from context lines too
+    for i, line in ipairs(ctx_lines) do
+      ctx_lines[i] = line:gsub("\n", " ")
+    end
+
+    api.nvim_set_option_value("modifiable", true, { buf = self.context_bufnr })
+    api.nvim_buf_set_lines(self.context_bufnr, 0, -1, false, ctx_lines)
+    api.nvim_set_option_value("modifiable", false, { buf = self.context_bufnr })
+
+    local ctx_ns_id = api.nvim_create_namespace("codecompanion_ask_user_ctx")
+    api.nvim_buf_clear_namespace(self.context_bufnr, ctx_ns_id, 0, -1)
+
+    for _, hl in ipairs(ctx_highlights) do
+      local line, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
+      if col_end == -1 then col_end = #ctx_lines[line + 1] end
+      pcall(api.nvim_buf_add_highlight, self.context_bufnr, ctx_ns_id, hl_group, line, col_start, col_end)
+    end
+  end
+
   if self.winnr and api.nvim_win_is_valid(self.winnr) then
     ---@type integer
     local cursor_line = self:_get_cursor_line()
@@ -297,9 +380,9 @@ end
 function AskUserForm:_setup_winbar()
   self:_set_winbar({
     { keys = "j/k", desc = "Navigate" },
-    { keys = "Enter", desc = "Select" },
-    { keys = "Space", desc = "Toggle" },
+    { keys = "Enter/Space", desc = "Select" },
     { keys = "S", desc = "Submit" },
+    { keys = "R", desc = "Reject" },
     { keys = "q", desc = "Cancel" },
   })
 end
@@ -467,10 +550,21 @@ end
 function AskUserForm:close()
   local winnr = self.winnr
   local bufnr = self.bufnr
+  local context_winnr = self.context_winnr
+  local context_bufnr = self.context_bufnr
 
   self.winnr = nil
   self.bufnr = nil
+  self.context_winnr = nil
+  self.context_bufnr = nil
   active_form = nil
+
+  -- Close context window first (it's on top)
+  if context_winnr and api.nvim_win_is_valid(context_winnr) then api.nvim_win_close(context_winnr, true) end
+
+  if context_bufnr and api.nvim_buf_is_valid(context_bufnr) then
+    api.nvim_buf_delete(context_bufnr, { force = true })
+  end
 
   if winnr and api.nvim_win_is_valid(winnr) then api.nvim_win_close(winnr, true) end
 
@@ -484,8 +578,21 @@ function AskUserForm:cancel()
   self:close()
 
   if callback then callback({
-    status = "error",
+    status = "cancelled",
     data = "User cancelled the questions form",
+  }) end
+end
+
+---Reject the form with optional feedback
+---@param reason? string Optional reason for rejection
+function AskUserForm:reject(reason)
+  local callback = self.callback
+
+  self:close()
+
+  if callback then callback({
+    status = "rejected",
+    data = reason or "User rejected the questions",
   }) end
 end
 
@@ -493,7 +600,7 @@ end
 function AskUserForm:_setup_keymaps()
   local opts = { buffer = self.bufnr, nowait = true, silent = true }
 
-  -- stylua: ignore start 
+  -- stylua: ignore start
   vim.keymap.set("n", "<Tab>",   function() self:next_question() end, opts)
   vim.keymap.set("n", "<S-Tab>", function() self:prev_question() end, opts)
   vim.keymap.set("n", "j",       function() self:next_choice() end,   opts)
@@ -503,44 +610,78 @@ function AskUserForm:_setup_keymaps()
   vim.keymap.set("n", "<CR>",    function() self:handle_select() end, opts)
   vim.keymap.set("n", "<Space>", function() self:handle_select() end, opts)
   vim.keymap.set("n", "q",       function() self:cancel() end,        opts)
-  vim.keymap.set("n", "<Esc>",   function() self:cancel() end,        opts)
   vim.keymap.set("n", "S",       function() self:submit() end,        opts)
   vim.keymap.set("n", "<C-s>",   function() self:submit() end,        opts)
   -- stylua: ignore end
+
+  vim.keymap.set("n", "R", function()
+    local form = self
+    vim.ui.input({
+      prompt = "Rejection reason (optional): ",
+    }, function(input)
+      if input == nil then return end
+      form:reject(input ~= "" and input or nil)
+    end)
+  end, opts)
 end
 
 ---Show the form in a floating window
 function AskUserForm:show()
   if active_form then active_form:close() end
 
-  -- Create buffer
-  self.bufnr = api.nvim_create_buf(false, true)
-  api.nvim_set_option_value("buftype", "nofile", { buf = self.bufnr })
-  api.nvim_set_option_value("bufhidden", "wipe", { buf = self.bufnr })
-  api.nvim_set_option_value("swapfile", false, { buf = self.bufnr })
-  api.nvim_buf_set_name(self.bufnr, "CodeCompanion_Questions")
-
-  -- Calculate window dimensions (wider for better readability)
   self.width = math.min(90, math.floor(vim.o.columns * 0.85))
-  self.height = math.min(30, math.floor(vim.o.lines * 0.7))
-  local row = math.floor((vim.o.lines - self.height) / 2)
+
+  local context_height = self:_get_context_height()
+  local total_available = math.min(30, math.floor(vim.o.lines * 0.7))
+
+  local questions_height
+  if context_height > 0 then
+    questions_height = math.max(10, total_available - context_height)
+  else
+    questions_height = total_available
+  end
+
+  self.height = questions_height
+
+  local total_height = context_height > 0 and (context_height + questions_height) or questions_height
+  local start_row = math.floor((vim.o.lines - total_height) / 2)
   local col = math.floor((vim.o.columns - self.width) / 2)
 
-  -- Create window
-  self.winnr = api.nvim_open_win(self.bufnr, true, {
-    relative = "editor",
+  -- Create context window first (if we have context)
+  if self.context and context_height > 0 then
+    local ctx = self:_create_window({
+      name = "CodeCompanion_Context",
+      width = self.width,
+      height = context_height,
+      row = start_row,
+      col = col,
+      focusable = false,
+      border = "rounded",
+      title = " Context ",
+      title_pos = "center",
+      filetype = "markdown",
+      winhighlight = "FloatBorder:" .. HL.HEADER .. ",NormalFloat:Normal",
+    })
+    self.context_bufnr = ctx.bufnr
+    self.context_winnr = ctx.winnr
+  end
+
+  -- Create questions window
+  local questions_row = context_height > 0 and (start_row + context_height + 2) or start_row
+
+  local questions = self:_create_window({
+    name = "CodeCompanion_Questions",
     width = self.width,
-    height = self.height,
-    row = row,
+    height = questions_height,
+    row = questions_row,
     col = col,
-    style = "minimal",
+    focusable = true,
     border = "rounded",
     title = " Questions ",
     title_pos = "center",
   })
-
-  api.nvim_set_option_value("wrap", true, { win = self.winnr })
-  api.nvim_set_option_value("cursorline", false, { win = self.winnr })
+  self.bufnr = questions.bufnr
+  self.winnr = questions.winnr
 
   active_form = self
 
@@ -625,6 +766,11 @@ return {
                 status = "success",
                 data = formatted,
               })
+            elseif result.status == "rejected" then
+              output_handler({
+                status = "rejected",
+                data = result.data,
+              })
             else
               -- Cancelled or error
               output_handler({
@@ -637,6 +783,22 @@ return {
         form:show()
       end)
 
+      return nil
+    end,
+  },
+  env = {
+    ---Check if the result is a rejection
+    ---@param result { status: string, data: any }
+    ---@return boolean
+    is_rejected = function(result)
+      return result and result.status == "rejected"
+    end,
+
+    ---Get rejection reason if rejected
+    ---@param result { status: string, data: any }
+    ---@return string|nil
+    get_rejection_reason = function(result)
+      if result and result.status == "rejected" then return result.data end
       return nil
     end,
   },
@@ -807,6 +969,18 @@ The user has answered your questions. Use their responses to proceed with the ta
       else
         chat:add_tool_output(tool, fmt("Error asking user questions: %s", error_msg))
       end
+    end,
+
+    ---Rejection message back to the LLM
+    ---@param tool CodeCompanion.Tools.Tool
+    ---@param tools CodeCompanion.Tools
+    ---@param cmd table
+    ---@param opts table
+    ---@return nil
+    rejected = function(tool, tools, cmd, opts)
+      local message = "The user rejected the questions"
+      opts = vim.tbl_extend("force", { message = message }, opts or {})
+      helpers.rejected(tool, tools, cmd, opts)
     end,
   },
   opts = {
