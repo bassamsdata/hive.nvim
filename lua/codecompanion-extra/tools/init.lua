@@ -6,19 +6,19 @@ local M = {}
 ---@type table<string, table|fun():table>
 M.tools = {
   get_diagnostics = function()
-    return require("codecompanion-extra.tools.get_diagnostics")
+    return (require("codecompanion-extra.tools.get_diagnostics"))
   end,
   task = function()
-    return require("codecompanion-extra.tools.task")
+    return (require("codecompanion-extra.tools.task"))
   end,
   ask_user = function()
-    return require("codecompanion-extra.tools.ask_user")
+    return (require("codecompanion-extra.tools.ask_user"))
   end,
   skill = function()
-    return require("codecompanion-extra.tools.skill")
+    return (require("codecompanion-extra.tools.skill"))
   end,
   list_directory = function()
-    return require("codecompanion-extra.tools.list_directory")
+    return (require("codecompanion-extra.tools.list_directory"))
   end,
 }
 
