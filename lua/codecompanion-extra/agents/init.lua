@@ -176,6 +176,23 @@ function M._register_extra_tools()
       or "List contents of a directory",
     opts = {},
   }
+
+  local todo = require("codecompanion-extra.tools.todo")
+  local todowrite = todo.get_todowrite()
+  chat_tools["todowrite"] = {
+    callback = todowrite,
+    description = todowrite.schema and todowrite.schema["function"] and todowrite.schema["function"].description
+      or "Create or update task list",
+    opts = {},
+  }
+
+  local todoread = todo.get_todoread()
+  chat_tools["todoread"] = {
+    callback = todoread,
+    description = todoread.schema and todoread.schema["function"] and todoread.schema["function"].description
+      or "Read current task list",
+    opts = {},
+  }
 end
 
 ---Handle agent switching with toggle or select

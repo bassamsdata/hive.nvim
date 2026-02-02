@@ -47,6 +47,8 @@ M.agents = {
       "ask_user",
       "fetch_webpage",
       "web_search",
+      "todowrite",
+      "todoread",
     },
     permissions = {
       can_spawn_subagents = true,
