@@ -32,14 +32,21 @@ function M.setup(config)
     end
   end
 
+  local markdown = require("codecompanion-extra.agents.markdown")
+
+  if M._config.load_default_agents ~= false then
+    local default_loaded = markdown.load_from_dir(markdown.default_dir())
+    M._agents = vim.tbl_deep_extend("force", M._agents, default_loaded)
+  end
+
   if M._config.load_from_dir then
-    local markdown = require("codecompanion-extra.agents.markdown")
     local loaded = markdown.load_from_dir(M._config.load_from_dir)
     M._agents = vim.tbl_deep_extend("force", M._agents, loaded)
   end
 
   M._register_agent_groups()
   M._setup_keymap()
+  M._setup_todo_keymap()
   M._setup_navigation()
   M._setup_chat_events()
   M._register_extra_tools()
@@ -127,6 +134,13 @@ end
 function M._setup_navigation()
   local navigation = require("codecompanion-extra.agents.navigation")
   navigation.setup()
+end
+
+---Setup todo viewer keymap
+---@private
+function M._setup_todo_keymap()
+  local todo = require("codecompanion-extra.tools.todo")
+  todo.setup_keymap("gT")
 end
 
 ---Register extra tools (task, ask_user, skill) globally
@@ -493,7 +507,9 @@ function M._get_extra_tool(tool_name)
     local tool_def = tools.get(tool_name)
     if tool_def then
       return {
-        callback = tool_def,
+        callback = function()
+          return tool_def
+        end,
         description = tool_def.schema and tool_def.schema["function"] and tool_def.schema["function"].description
           or "Custom tool",
       }
