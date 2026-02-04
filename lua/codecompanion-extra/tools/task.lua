@@ -424,13 +424,14 @@ end
 ---@return number tool_count
 function TaskBatch:extract_child_result(child_chat, child_bufnr)
   local hierarchy = require("codecompanion-extra.agents.hierarchy")
+  local config = require("codecompanion.config")
 
   local messages = child_chat.messages or {}
   local final_text = ""
 
   for i = #messages, 1, -1 do
     local msg = messages[i]
-    if msg.role == "assistant" and msg.content then
+    if msg.role == config.constants.LLM_ROLE and msg.content then
       local content = msg.content
       if type(content) == "table" then
         for _, part in ipairs(content) do
