@@ -12,7 +12,8 @@ local M = {}
 ---@field keymap? { switch?: table<string, string> } Keymap configuration
 ---@field definitions? table<string, CodeCompanionExtra.Agent> Custom agent definitions
 ---@field load_from_dir? string Directory to load agents from markdown files
----@field small_model? string Model for subagents in format "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.codecompanion_small_model
+---@field small_model? string Model for subagents. Format: "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.EXTRA_SMALL_MODEL
+---@field big_model? string Model for consultant agents. Format: "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.EXTRA_BIG_MODEL
 
 ---@class CodeCompanionExtra.SkillsConfig
 ---@field enabled boolean Enable skills support
@@ -24,16 +25,16 @@ local M = {}
 M.defaults = {
   modules = {
     spinner = { enabled = true },
+    notify = { enabled = true },
     adapters = { enabled = true },
     tools = { enabled = true },
     agents = { enabled = true },
     skills = { enabled = true },
-    list_directory = { enabled = true },
   },
 
   spinner = {
     spinner = {
-      frames = "slide_bar",
+      frames = "simple_pounce",
       interval = 80,
     },
     display = {
@@ -51,6 +52,18 @@ M.defaults = {
     },
   },
 
+  sys_notify = {
+    enabled = true,
+    only_when_unfocused = true,
+    notify_on = {
+      completed = true,
+      error = true,
+      cancelled = false,
+    },
+    title = "CC Extra",
+    fallback = true,
+  },
+
   adapters = {
     groq = { enabled = true },
     cerebras = { enabled = true },
@@ -60,8 +73,12 @@ M.defaults = {
   tools = {
     get_diagnostics = { enabled = true },
     task = { enabled = true },
+    consult = { enabled = true },
     ask_user = { enabled = true },
     skill = { enabled = true },
+    list_directory = { enabled = true },
+    todowrite = { enabled = true },
+    todoread = { enabled = true },
   },
 
   agents = {
@@ -71,17 +88,18 @@ M.defaults = {
       -- Navigation keymaps are registered automatically:
       -- ]s - next subagent
       -- [s - prev subagent
-      -- [p - parent agent
-      -- gs - list subagents
+      -- ]p - parent agent
+      -- ]S - list subagents
     },
 
-    -- Model for subagents. Format: "adapter/model" or "adapter/provider/model"
+    -- Model for subagents/primary agents. Format: "adapter/model" or "adapter/provider/model"
     -- Examples:
     --   "openai/gpt-4o-mini"          -> adapter: openai, model: gpt-4o-mini
     --   "openrouter/openai/gpt-4o"    -> adapter: openrouter, model: openai/gpt-4o
-    -- If nil, subagents inherit adapter/model from parent chat.
-    -- Can be overridden at runtime via vim.g.codecompanion_small_model
+    -- If nil, agents inherit adapter/model from parent chat.
+    -- Can be overridden at runtime via vim.g.EXTRA_SMALL_MODEL or vim.g.EXTRA_BIG_MODEL
     small_model = nil,
+    big_model = nil,
 
     -- Override built-in agents or add custom ones
     -- Built-in agents: build, plan (primary), explorer, general, analyzer (subagents)
@@ -125,19 +143,16 @@ function M.parse_model_string(model_str)
   return nil
 end
 
----Get the small model configuration for subagents
----Priority: vim.g.codecompanion_small_model > config.agents.small_model > nil (inherit from parent)
+---Get model configuration for agents (big or small)
+---Priority: vim.g.EXTRA_{TYPE}_MODEL > vim.g.extra_{type}_model > config.agents.{type}_model > nil
+---@param type "small"|"big"
 ---@return { adapter: string, model: string }|nil
-function M.get_small_model()
-  -- Check vim.g override first
-  local global_override = vim.g.codecompanion_small_model
-  if global_override then return M.parse_model_string(global_override) end
+function M.get_model(type)
+  local model = vim.g["EXTRA_" .. type:upper() .. "_MODEL"]
+    or vim.g["extra_" .. type .. "_model"]
+    or (M.config.agents and M.config.agents[type .. "_model"])
 
-  -- Check config
-  local config_model = M.config.agents and M.config.agents.small_model
-  if config_model then return M.parse_model_string(config_model) end
-
-  return nil
+  return M.parse_model_string(model)
 end
 
 ---Merge user config with defaults

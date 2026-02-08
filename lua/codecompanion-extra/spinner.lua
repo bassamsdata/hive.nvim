@@ -1,30 +1,8 @@
---[[
-===============================================================================
-    File:       codecompanion-extra/spinner.lua
-    Author:     Bassam Data (https://github.com/bassamsdata)
--------------------------------------------------------------------------------
-    Description:
-      Visual feedback spinner for CodeCompanion requests and tool execution.
-      Shows real-time status with customizable animations.
+-- New spinner implementation backed by state.lua (does not replace spinner.lua)
 
-    FEATURES:
-      • 15+ built-in spinner presets
-      • Shows adapter, provider, and model information
-      • Tool execution tracking
-      • Customizable display and timing
--------------------------------------------------------------------------------
-    Attribution:
-      If you use or distribute this code, please credit:
-      Bassam Data (https://github.com/bassamsdata)
-===============================================================================
---]]
+local state = require("codecompanion-extra.state")
 
----TODO:
----1. enhance bug when the timer turns into minutes, the seconds, lose the highilights.
----2. add final timer when complete/cancel/error meaning this is total time of full request.
----3. move to set_ectmark since it has eol_right_align position for notifications.
----4. we need to detect when the chat is cleared completly to stop the spoinner. in case something goes wrrong with the chat.
----5. we need also to manually allow to stop it.
+local api = vim.api
 
 -- ============================================================================
 -- CONSTANTS AND CONFIGURATION DEFAULTS
@@ -36,6 +14,7 @@ local CONSTANTS = {
   RIGHT_OFFSET = 1,
 
   COMPLETION_DISPLAY_TIME = 3000,
+  SUBAGENT_COMPLETION_DISPLAY_TIME = 2500,
   SPINNER_INTERVAL = 80,
 
   STATUS = {
@@ -43,12 +22,12 @@ local CONSTANTS = {
     STREAMING = "Streaming",
     TOOL_RUNNING = "Executing Tool",
     PROCESSING = "Processing",
-    COMPLETED = "Completed ",
+    COMPLETED = "Done ",
     ERROR = " Error ",
     CANCELLED = "Cancelled ",
   },
 
-  -- stylua: ignore start 
+  -- stylua: ignore start
   SPINNER_FRAMES = {
     corner        = { "◜", "◝", "◞", "◟" },
     braille       = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" },
@@ -83,10 +62,9 @@ local CONSTANTS = {
     SpinnerInfo = "Special",
     SpinnerLabel = "Comment",
     SpinnerProvider = "DiagnosticHint",
+    SpinnerSubagent = "DiagnosticWarn",
+    SpinnerConnector = "NonText",
   },
-
-  DEBUG_ENABLED = true,
-  DEBUG_LOG_FILE = vim.fn.stdpath("cache") .. "/spinner_debug.log",
 }
 
 local DEFAULT_CONFIG = {
@@ -95,12 +73,18 @@ local DEFAULT_CONFIG = {
     interval = CONSTANTS.SPINNER_INTERVAL,
     brackets = false,
   },
+  subagent_spinner = {
+    frames = CONSTANTS.SPINNER_FRAMES.braille,
+  },
   display = {
     show_model = true,
     show_tool_name = false,
     show_tool_status = true,
     show_timestamps = true,
+    show_subagents = true,
+    show_subagent_timers = true,
     completion_display_time = CONSTANTS.COMPLETION_DISPLAY_TIME,
+    subagent_completion_display_time = CONSTANTS.SUBAGENT_COMPLETION_DISPLAY_TIME,
   },
   window = {
     max_width_percent = CONSTANTS.MAX_WIDTH_PERCENT,
@@ -110,154 +94,71 @@ local DEFAULT_CONFIG = {
   },
 }
 
--- ============================================================================
--- SPINNER CLASS
--- ============================================================================
--- State machine states: idle, sending, streaming, tool_running, completed, error, cancelled
---
--- Valid transitions:
---   idle -> sending (on request_started)
---   sending -> streaming (on request_streaming)
---   streaming -> completed/error/cancelled (on request_finished)
---   streaming -> tool_running (on tool_started)
---   tool_running -> streaming (on tool_finished, if request still active)
---   tool_running -> completed (on tool_finished, if request done)
---   completed/error/cancelled -> idle (after display timeout)
---   any -> sending (on new request_started - resets everything)
--- ============================================================================
-
----@class Spinner
----@field config table
----@field ns_id integer
----@field state table
----@field _setup_highlights function
----@field _debug_log function
 local Spinner = {}
-
 Spinner.__index = Spinner
 
----Create a new Spinner instance
----@param config? table
----@return Spinner
 function Spinner.new(config)
   local self = setmetatable({}, Spinner)
   self.config = vim.tbl_deep_extend("force", vim.deepcopy(DEFAULT_CONFIG), config or {})
-  self:_validate_spinner_frames()
-  self.ns_id = vim.api.nvim_create_namespace("spinner_info")
-
+  self.ns_id = api.nvim_create_namespace("spinner_info_new")
   self.state = {
-    status = "idle",
-
-    request_id = nil,
-    request_started = nil,
-
-    adapter = nil,
-    model = nil,
-    provider = nil,
-    interaction_type = nil,
-
-    current_tool = nil,
-    active_tools = {},
-
     win = nil,
     buf = nil,
     frame = 1,
-
+    subagent_frame = 1,
     animation_timer = nil,
-    completion_timer = nil,
+    last_height = nil,
+    last_win_config = nil,
+    last_buf = nil,
+    last_parent_durations = {},
   }
-
+  self:_validate_spinner_frames()
+  self:_validate_subagent_spinner_frames()
   return self
 end
 
----Validate and normalize spinner frames configuration
----@private
 function Spinner:_validate_spinner_frames()
-  local frames = self.config.spinner.frames
+  self.config.spinner.frames = self:_resolve_frames(self.config.spinner.frames)
+end
 
-  -- Allow string preset names
+function Spinner:_validate_subagent_spinner_frames()
+  self.config.subagent_spinner.frames = self:_resolve_frames(self.config.subagent_spinner.frames)
+end
+
+function Spinner:_resolve_frames(frames)
   if type(frames) == "string" then
     local preset = CONSTANTS.SPINNER_FRAMES[frames]
-    if preset then
-      self.config.spinner.frames = preset
-      return
-    else
-      vim.notify(string.format("Spinner: Unknown preset '%s', using default", frames), vim.log.levels.WARN)
-      self.config.spinner.frames = CONSTANTS.SPINNER_FRAMES.braille
-      return
-    end
+    if preset then return preset end
+    vim.notify(string.format("Spinner: Unknown preset '%s', using default", frames), vim.log.levels.WARN)
+    return CONSTANTS.SPINNER_FRAMES.braille
   end
 
-  -- Allow function that returns frames
-  if type(frames) == "function" then
-    frames = frames()
-    self.config.spinner.frames = frames
-  end
+  if type(frames) == "function" then frames = frames() end
 
-  -- Validate frames is a non-empty table
   if type(frames) ~= "table" or vim.tbl_isempty(frames) then
     vim.notify("Spinner: Invalid frames config, using default", vim.log.levels.WARN)
-    self.config.spinner.frames = CONSTANTS.SPINNER_FRAMES.braille
+    return CONSTANTS.SPINNER_FRAMES.braille
   end
+
+  return frames
 end
 
--- ============================================================================
--- DEBUG LOGGING
--- ============================================================================
-
----Log debug message to file
----@param message string
----@private
-function Spinner:_debug_log(message)
-  if not CONSTANTS.DEBUG_ENABLED then return end
-
-  local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-  local log_line = string.format("[%s] %s\n", timestamp, message)
-
-  local file = io.open(CONSTANTS.DEBUG_LOG_FILE, "a")
-  if file then
-    file:write(log_line)
-    file:close()
-  end
-end
-
----Log current state for debugging
----@param context string Context/location of the log
----@private
-function Spinner:_debug_state(context)
-  if not CONSTANTS.DEBUG_ENABLED then return end
-
-  local state_summary = string.format(
-    "State[%s]: status=%s, request_id=%s, current_tool=%s, active_tools=%d",
-    context,
-    self.state.status,
-    tostring(self.state.request_id),
-    tostring(self.state.current_tool),
-    vim.tbl_count(self.state.active_tools)
-  )
-  self:_debug_log(state_summary)
-end
-
--- ============================================================================
--- HIGHLIGHT SETUP
--- ============================================================================
-
----Setup highlight groups
----@private
 function Spinner:_setup_highlights()
   for group_name, link_to in pairs(CONSTANTS.HIGHLIGHT_LINKS) do
-    vim.api.nvim_set_hl(0, group_name, { link = link_to, default = true })
+    api.nvim_set_hl(0, group_name, { link = link_to, default = true })
   end
 end
 
--- ============================================================================
--- UTILITY FUNCTIONS
--- ============================================================================
+function Spinner:_get_spinner_char()
+  local char = self.config.spinner.frames[self.state.frame]
+  if self.config.spinner.brackets then char = "[" .. char .. "]" end
+  return char
+end
 
----Format elapsed time
----@param seconds number
----@return string
----@private
+function Spinner:_get_subagent_spinner_char()
+  return self.config.subagent_spinner.frames[self.state.subagent_frame]
+end
+
 function Spinner:_format_time(seconds)
   if seconds < 60 then return string.format("%.1fs", seconds) end
   local minutes = math.floor(seconds / 60)
@@ -265,173 +166,327 @@ function Spinner:_format_time(seconds)
   return string.format("%dm %.1fs", minutes, secs)
 end
 
----Get elapsed time since request started
----@return string
----@private
-function Spinner:_get_elapsed_time()
-  if not self.state.request_started then return "0.0s" end
-  local elapsed = (vim.uv.now() - self.state.request_started) / 1000
+function Spinner:_get_elapsed_time(parent)
+  if not parent.request_started then return "0.0s" end
+  local elapsed = (vim.uv.now() - parent.request_started) / 1000
   return self:_format_time(elapsed)
 end
 
----Format adapter info for display
----@return string
----@private
-function Spinner:_format_adapter_info()
-  local parts = {}
-  if self.state.adapter then table.insert(parts, self.state.adapter) end
-  if self.state.provider then table.insert(parts, string.format("(%s)", self.state.provider)) end
-  if self.state.model and self.state.model ~= self.state.adapter then table.insert(parts, self.state.model) end
-  return table.concat(parts, " - ")
-end
-
--- ============================================================================
--- TIMER MANAGEMENT
--- ============================================================================
-
----Cancel completion timer
----@private
-function Spinner:_cancel_completion_timer()
-  if self.state.completion_timer then
-    if not self.state.completion_timer:is_closing() then
-      self.state.completion_timer:stop()
-      self.state.completion_timer:close()
-    end
-    self.state.completion_timer = nil
+function Spinner:_get_total_time(parent, bufnr)
+  if parent.duration_ms then
+    if bufnr then self.state.last_parent_durations[bufnr] = parent.duration_ms end
+    return self:_format_time(parent.duration_ms / 1000)
   end
-end
-
----Cancel animation timer
----@private
-function Spinner:_cancel_animation_timer()
-  if self.state.animation_timer then
-    if not self.state.animation_timer:is_closing() then
-      self.state.animation_timer:stop()
-      self.state.animation_timer:close()
-    end
-    self.state.animation_timer = nil
+  if bufnr and self.state.last_parent_durations[bufnr] then
+    return self:_format_time(self.state.last_parent_durations[bufnr] / 1000)
   end
+  if not parent.total_started then return self:_get_elapsed_time(parent) end
+  local elapsed = (vim.uv.now() - parent.total_started) / 1000
+  if bufnr then self.state.last_parent_durations[bufnr] = elapsed * 1000 end
+  return self:_format_time(elapsed)
 end
 
----Cancel all timers
----@private
-function Spinner:_cancel_all_timers()
-  self:_cancel_completion_timer()
-  self:_cancel_animation_timer()
+function Spinner:_get_total_elapsed_time(parent)
+  if not parent.total_started then return self:_get_elapsed_time(parent) end
+  local elapsed = (vim.uv.now() - parent.total_started) / 1000
+  return self:_format_time(elapsed)
 end
 
--- ============================================================================
--- WINDOW MANAGEMENT
--- ============================================================================
-
----Close the spinner window
----@private
-function Spinner:_close_window()
-  if self.state.win and vim.api.nvim_win_is_valid(self.state.win) then vim.api.nvim_win_close(self.state.win, true) end
-  self.state.win = nil
-  self.state.buf = nil
+function Spinner:_is_child_bufnr(bufnr)
+  if not bufnr then return false end
+  local ok, hierarchy = pcall(require, "codecompanion-extra.agents.hierarchy")
+  return ok and hierarchy.is_child(bufnr) or false
 end
 
----Check if window is valid
----@return boolean
----@private
-function Spinner:_is_window_valid()
-  return self.state.win
-    and self.state.buf
-    and vim.api.nvim_win_is_valid(self.state.win)
-    and vim.api.nvim_buf_is_valid(self.state.buf)
+function Spinner:_get_focused_parent_bufnr()
+  local current_win = api.nvim_get_current_win()
+  local current_buf = api.nvim_win_get_buf(current_win)
+  if
+    api.nvim_buf_is_valid(current_buf)
+    and api.nvim_get_option_value("filetype", { buf = current_buf }) == "codecompanion"
+  then
+    return current_buf
+  end
+
+  for _, win in ipairs(api.nvim_list_wins()) do
+    local buf = api.nvim_win_get_buf(win)
+    if api.nvim_buf_is_valid(buf) and api.nvim_get_option_value("filetype", { buf = buf }) == "codecompanion" then
+      return buf
+    end
+  end
+
+  return nil
 end
 
--- ============================================================================
--- DISPLAY BUILDING
--- ============================================================================
+function Spinner:_get_active_parent(view)
+  local focused = self:_get_focused_parent_bufnr()
+  if focused and view.parents[focused] and view.parents[focused].status ~= "idle" then
+    return view.parents[focused], focused
+  end
 
----Build display content lines
----@return string[]
----@private
-function Spinner:_build_display_content()
-  local lines = {}
-  local spinner_char = self.config.spinner.frames[self.state.frame]
+  if view.active_parent_bufnr and view.parents[view.active_parent_bufnr] then
+    local active = view.parents[view.active_parent_bufnr]
+    if active.status ~= "idle" then return active, view.active_parent_bufnr end
+  end
 
-  -- Apply brackets if configured
-  if self.config.spinner.brackets then spinner_char = "[" .. spinner_char .. "]" end
+  for bufnr, parent in pairs(view.parents) do
+    if parent.status ~= "idle" then return parent, bufnr end
+  end
 
-  -- Line 1: Adapter/Model/Provider info (ALWAYS show if available)
-  local adapter_info = self:_format_adapter_info()
-  if adapter_info ~= "" and self.config.display.show_model then table.insert(lines, adapter_info) end
+  return nil, nil
+end
 
-  -- Line 2: Status with spinner or completion icon
-  local status_text = ""
+function Spinner:_build_adapter_line(parent)
+  if not self.config.display.show_model then return nil end
+  local chunks = {}
+  local model = parent.model
+  if type(model) == "table" then model = model.name or model.default or model.id or model.model end
+  if model then table.insert(chunks, { tostring(model), "SpinnerInfo" }) end
+  if parent.adapter then
+    if #chunks > 0 then table.insert(chunks, { " ", "SpinnerInfo" }) end
+    table.insert(chunks, { "(", "SpinnerDim" })
+    table.insert(chunks, { parent.adapter, "SpinnerInfo" })
+    table.insert(chunks, { ")", "SpinnerDim" })
+  end
+  if #chunks == 0 then return nil end
+  return chunks
+end
 
-  if self.state.status == "sending" then
-    status_text = CONSTANTS.STATUS.SENDING .. " " .. spinner_char
-  elseif self.state.status == "streaming" then
-    status_text = CONSTANTS.STATUS.STREAMING .. " " .. spinner_char
-  elseif self.state.status == "tool_running" then
-    -- Show tool name inline with status if configured
+function Spinner:_build_status_line(parent, active_parent_count, bufnr)
+  local spinner_char = self:_get_spinner_char()
+  local chunks = {}
+  local chat_label = ""
+
+  if parent.status == "sending" then
+    table.insert(chunks, { CONSTANTS.STATUS.SENDING .. chat_label .. " ", "SpinnerActive" })
+    table.insert(chunks, { spinner_char, "SpinnerActive" })
+  elseif parent.status == "streaming" then
+    table.insert(chunks, { CONSTANTS.STATUS.STREAMING .. chat_label .. " ", "SpinnerActive" })
+    table.insert(chunks, { spinner_char, "SpinnerActive" })
+  elseif parent.status == "tool_running" then
     if self.config.display.show_tool_status then
-      status_text = CONSTANTS.STATUS.TOOL_RUNNING
-      if self.config.display.show_tool_name and self.state.current_tool then
-        status_text = status_text .. ": " .. self.state.current_tool
+      local label = CONSTANTS.STATUS.TOOL_RUNNING
+      if self.config.display.show_tool_name and parent.current_tool then
+        label = label .. ": " .. parent.current_tool
       end
-      status_text = status_text .. " " .. spinner_char
+      table.insert(chunks, { label .. chat_label .. " ", "SpinnerActive" })
+      table.insert(chunks, { spinner_char, "SpinnerActive" })
     else
-      status_text = CONSTANTS.STATUS.PROCESSING .. " " .. spinner_char
+      table.insert(chunks, { CONSTANTS.STATUS.PROCESSING .. chat_label .. " ", "SpinnerActive" })
+      table.insert(chunks, { spinner_char, "SpinnerActive" })
     end
-  elseif self.state.status == "completed" then
-    status_text = CONSTANTS.STATUS.COMPLETED
-  elseif self.state.status == "error" then
-    status_text = CONSTANTS.STATUS.ERROR
-  elseif self.state.status == "cancelled" then
-    status_text = CONSTANTS.STATUS.CANCELLED
+  elseif parent.status == "completed" then
+    table.insert(chunks, { CONSTANTS.STATUS.COMPLETED .. chat_label, "SpinnerSuccess" })
+  elseif parent.status == "error" then
+    table.insert(chunks, { CONSTANTS.STATUS.ERROR .. chat_label, "SpinnerError" })
+  elseif parent.status == "cancelled" then
+    table.insert(chunks, { CONSTANTS.STATUS.CANCELLED .. chat_label, "SpinnerLabel" })
   else
-    status_text = CONSTANTS.STATUS.PROCESSING .. " " .. spinner_char
+    table.insert(chunks, { CONSTANTS.STATUS.PROCESSING .. chat_label .. " ", "SpinnerActive" })
+    table.insert(chunks, { spinner_char, "SpinnerActive" })
   end
 
-  -- Add timestamp
-  if self.config.display.show_timestamps then status_text = status_text .. " " .. self:_get_elapsed_time() end
+  if self.config.display.show_timestamps then
+    local is_terminal = parent.status == "completed" or parent.status == "error" or parent.status == "cancelled"
+    if is_terminal then
+      table.insert(chunks, { " · " .. self:_get_total_time(parent, bufnr), "SpinnerLabel" })
+    else
+      table.insert(chunks, { " [" .. self:_get_elapsed_time(parent) .. "]", "SpinnerLabel" })
+      if parent.total_started then
+        local total_elapsed = (vim.uv.now() - parent.total_started) / 1000
+        if total_elapsed >= 60 then
+          table.insert(chunks, { " · " .. self:_get_total_elapsed_time(parent), "SpinnerDim" })
+        end
+      end
+    end
+  end
 
-  table.insert(lines, status_text)
+  return chunks
+end
+
+function Spinner:_build_subagent_line(info)
+  local name = info.agent_name or "Unknown"
+  name = name:sub(1, 1):upper() .. name:sub(2)
+  local time_str = self.config.display.show_subagent_timers
+      and (info.duration_ms and self:_format_time(info.duration_ms / 1000) or self:_format_time(
+        (vim.uv.now() - info.start_time) / 1000
+      ))
+    or nil
+  local calls_str = info.tool_count > 0 and string.format("%d calls", info.tool_count) or nil
+  local prefix = { "↳ ", "SpinnerConnector" }
+
+  local chunks = { prefix }
+  if info.status == "running" then
+    table.insert(chunks, { name .. " ", "SpinnerSubagent" })
+    table.insert(chunks, { self:_get_subagent_spinner_char(), "SpinnerSubagent" })
+    if calls_str then table.insert(chunks, { " " .. calls_str, "SpinnerLabel" }) end
+    if time_str then table.insert(chunks, { " " .. time_str, "SpinnerLabel" }) end
+    return chunks
+  end
+
+  local status_icon, hl = "✗", "SpinnerError"
+  if info.status == "completed" then
+    status_icon, hl = "✓", "SpinnerSuccess"
+  end
+
+  table.insert(chunks, { status_icon .. " ", hl })
+  table.insert(chunks, { name, hl })
+  local detail_parts = {}
+  if calls_str then table.insert(detail_parts, calls_str) end
+  if time_str then table.insert(detail_parts, time_str) end
+  if #detail_parts > 0 then
+    table.insert(chunks, { " (" .. table.concat(detail_parts, ", ") .. ")", "SpinnerLabel" })
+  end
+
+  return chunks
+end
+
+function Spinner:_build_compact_subagents_line(subagents)
+  local sub_spinner = self:_get_subagent_spinner_char()
+  local total = vim.tbl_count(subagents)
+  local running = 0
+  local completed = 0
+  local failed = 0
+
+  for _, info in pairs(subagents) do
+    if info.status == "running" then
+      running = running + 1
+    elseif info.status == "completed" then
+      completed = completed + 1
+    else
+      failed = failed + 1
+    end
+  end
+
+  local chunks = {}
+  table.insert(chunks, { "Subagents: " .. total .. " ", "SpinnerSubagent" })
+  table.insert(chunks, { string.format("%d ", running), "SpinnerLabel" })
+  table.insert(chunks, { sub_spinner, "SpinnerSubagent" })
+  if completed > 0 then
+    table.insert(chunks, { "  " .. completed .. " ", "SpinnerLabel" })
+    table.insert(chunks, { "✓", "SpinnerSuccess" })
+  end
+  if failed > 0 then
+    table.insert(chunks, { "  " .. failed .. " ", "SpinnerLabel" })
+    table.insert(chunks, { "✗", "SpinnerError" })
+  end
+
+  return chunks
+end
+
+function Spinner:_build_subagent_lines(subagents)
+  if not self.config.display.show_subagents then return {} end
+
+  local visible = {}
+  for _, info in pairs(subagents or {}) do
+    table.insert(visible, info)
+  end
+  if #visible == 0 then return {} end
+
+  table.sort(visible, function(a, b)
+    if a.status == "running" and b.status ~= "running" then return true end
+    if a.status ~= "running" and b.status == "running" then return false end
+    return (a.agent_name or "") < (b.agent_name or "")
+  end)
+
+  if #visible >= 3 then return { self:_build_compact_subagents_line(subagents) } end
+
+  local lines = {}
+  for _, info in ipairs(visible) do
+    table.insert(lines, self:_build_subagent_line(info))
+  end
+  return lines
+end
+
+function Spinner:_build_display_lines()
+  local manager = state.instance()
+  if not manager then return {} end
+  local view = manager:get_parent_view()
+  local active_parent, active_bufnr = self:_get_active_parent(view)
+  if not active_parent then return {} end
+
+  local active_parent_count = 0
+  for _, parent in pairs(view.parents) do
+    if parent.status ~= "idle" then active_parent_count = active_parent_count + 1 end
+  end
+
+  local lines = {}
+  local adapter_line = self:_build_adapter_line(active_parent)
+  if adapter_line then table.insert(lines, adapter_line) end
+
+  local status_line = self:_build_status_line(active_parent, active_parent_count, active_bufnr)
+  table.insert(lines, status_line)
+
+  if active_parent_count > 1 then
+    table.insert(lines, { { "Parents: " .. active_parent_count .. " active", "SpinnerDim" } })
+  end
+
+  local subagent_lines = self:_build_subagent_lines(active_parent.subagents)
+  for _, line in ipairs(subagent_lines) do
+    table.insert(lines, line)
+  end
+
+  for _, line in ipairs(lines) do
+    table.insert(line, { " ", "SpinnerDim" })
+  end
 
   return lines
 end
 
----Calculate content width
----@param lines string[]
----@return number
----@private
-function Spinner:_calculate_content_width(lines)
-  local max_width = 0
-  for _, line in ipairs(lines) do
-    local width = vim.fn.strdisplaywidth(line)
-    if width > max_width then max_width = width end
+function Spinner:_virt_line_width(virt_line)
+  local width = 0
+  for _, chunk in ipairs(virt_line) do
+    local text = type(chunk[1]) == "string" and chunk[1] or ""
+    width = width + vim.fn.strdisplaywidth(text)
   end
-  return max_width
+  return width
 end
 
--- ============================================================================
--- WINDOW CREATION AND UPDATE
--- ============================================================================
+function Spinner:_max_display_width(lines)
+  local max_w = 0
+  for _, line in ipairs(lines) do
+    local w = self:_virt_line_width(line)
+    if w > max_w then max_w = w end
+  end
+  return max_w
+end
 
----Create the floating window
----@private
+function Spinner:_is_window_valid()
+  return self.state.win
+    and self.state.buf
+    and api.nvim_win_is_valid(self.state.win)
+    and api.nvim_buf_is_valid(self.state.buf)
+end
+
+function Spinner:_close_window()
+  if self.state.win and api.nvim_win_is_valid(self.state.win) then api.nvim_win_close(self.state.win, true) end
+  self.state.win = nil
+  self.state.buf = nil
+  self.state.last_buf = nil
+end
+
 function Spinner:_create_window()
   if not self.config.window.enabled then return end
 
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
-  vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
+  local buf = api.nvim_create_buf(false, true)
+  api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
+  api.nvim_set_option_value("buftype", "nofile", { buf = buf })
+  self.state.last_height = nil
+  self.state.last_win_config = nil
+  self.state.last_buf = buf
 
-  local content_lines = self:_build_display_content()
-  local height = #content_lines
-  local content_width = self:_calculate_content_width(content_lines)
+  local display_lines = self:_build_display_lines()
+  if #display_lines == 0 then return end
+
+  local height = #display_lines
+  local content_width = self:_max_display_width(display_lines)
   local max_allowed_width = math.floor(vim.o.columns * self.config.window.max_width_percent)
-  local width = math.min(content_width, max_allowed_width)
+  local width = math.max(math.min(content_width, max_allowed_width), 1)
 
   local row = vim.o.lines - vim.o.cmdheight - (vim.o.laststatus > 0 and 1 or 0) - height
   local col = vim.o.columns - width - self.config.window.right_offset
 
-  local win = vim.api.nvim_open_win(buf, false, {
+  local win = api.nvim_open_win(buf, false, {
     relative = "editor",
     border = "none",
     row = row,
@@ -442,347 +497,216 @@ function Spinner:_create_window()
     focusable = false,
     zindex = CONSTANTS.ZINDEX,
   })
-  vim.api.nvim_set_option_value("winblend", self.config.window.blend, { win = win })
+  api.nvim_set_option_value("winblend", self.config.window.blend, { win = win })
 
   self.state.buf = buf
   self.state.win = win
-
-  self:_debug_log(string.format("Created window: width=%d, height=%d", width, height))
 end
 
----Update the display content and window
----@private
 function Spinner:_update_display()
   if not self:_is_window_valid() then return end
 
-  local lines = self:_build_display_content()
+  local display_lines = self:_build_display_lines()
+  if #display_lines == 0 then
+    self:_close_window()
+    self:_stop_animation()
+    return
+  end
 
-  vim.api.nvim_buf_set_lines(self.state.buf, 0, -1, false, lines)
+  -- Sanitize virt_text chunks to avoid invalid chunk errors
+  local logged_invalid = false
+  for i, line in ipairs(display_lines) do
+    local sanitized = {}
+    for _, chunk in ipairs(line) do
+      if type(chunk) == "table" then
+        local text = chunk[1]
+        local hl = chunk[2]
+        if type(text) == "string" then
+          table.insert(sanitized, { text, hl })
+        elseif text ~= nil then
+          if not logged_invalid then
+            vim.notify(
+              "SpinnerNew: invalid virt_text chunk at line "
+                .. i
+                .. " -> "
+                .. vim.inspect(chunk)
+                .. " (coercing to string)",
+              vim.log.levels.WARN
+            )
+            logged_invalid = true
+          end
+          table.insert(sanitized, { tostring(text), hl })
+        end
+      elseif type(chunk) == "string" then
+        table.insert(sanitized, { chunk, "SpinnerDim" })
+      else
+        if chunk ~= nil and not logged_invalid then
+          vim.notify(
+            "SpinnerNew: invalid virt_text chunk at line " .. i .. " -> " .. vim.inspect(chunk) .. " (dropping)",
+            vim.log.levels.WARN
+          )
+          logged_invalid = true
+        end
+      end
+    end
+    display_lines[i] = sanitized
+  end
 
-  -- Update window size
-  local content_width = self:_calculate_content_width(lines)
+  local height = #display_lines
+  local content_width = self:_max_display_width(display_lines)
   local max_allowed_width = math.floor(vim.o.columns * self.config.window.max_width_percent)
-  local width = math.min(content_width, max_allowed_width)
-  local height = #lines
+  local width = math.max(math.min(content_width, max_allowed_width), 1)
+
+  if self.state.last_buf ~= self.state.buf then
+    self.state.last_height = nil
+    self.state.last_win_config = nil
+    self.state.last_buf = self.state.buf
+  end
+
+  if self.state.last_height ~= height or api.nvim_buf_line_count(self.state.buf) < height then
+    local empty_lines = {}
+    for _ = 1, height do
+      table.insert(empty_lines, "")
+    end
+    api.nvim_buf_set_lines(self.state.buf, 0, -1, false, empty_lines)
+    self.state.last_height = height
+  end
 
   local row = vim.o.lines - vim.o.cmdheight - (vim.o.laststatus > 0 and 1 or 0) - height
   local col = vim.o.columns - width - self.config.window.right_offset
 
-  vim.api.nvim_win_set_config(self.state.win, {
-    relative = "editor",
-    row = row,
-    col = col,
-    width = width,
-    height = height,
-  })
+  if
+    not self.state.last_win_config
+    or self.state.last_win_config.row ~= row
+    or self.state.last_win_config.col ~= col
+    or self.state.last_win_config.width ~= width
+    or self.state.last_win_config.height ~= height
+  then
+    api.nvim_win_set_config(self.state.win, {
+      relative = "editor",
+      row = row,
+      col = col,
+      width = width,
+      height = height,
+    })
+    self.state.last_win_config = { row = row, col = col, width = width, height = height }
+  end
 
-  -- Apply highlights
-  vim.api.nvim_buf_clear_namespace(self.state.buf, self.ns_id, 0, -1)
-
-  for line_idx, line in ipairs(lines) do
-    local hl_group = "SpinnerActive"
-
-    if line_idx == 1 and #lines > 1 then
-      -- First line is adapter info
-      hl_group = "SpinnerInfo"
-    elseif self.state.status == "completed" then
-      hl_group = "SpinnerSuccess"
-    elseif self.state.status == "error" then
-      hl_group = "SpinnerError"
-    end
-
-    vim.api.nvim_buf_set_extmark(self.state.buf, self.ns_id, line_idx - 1, 0, {
-      end_col = #line,
-      hl_group = hl_group,
+  api.nvim_buf_clear_namespace(self.state.buf, self.ns_id, 0, -1)
+  for line_idx, virt_line in ipairs(display_lines) do
+    api.nvim_buf_set_extmark(self.state.buf, self.ns_id, line_idx - 1, 0, {
+      virt_text = virt_line,
+      virt_text_pos = "eol_right_align",
       priority = vim.highlight.priorities.user + 1,
     })
-
-    -- Highlight provider in parentheses with different color
-    local provider_pattern = "%([^)]+%)"
-    local provider_start, provider_end = string.find(line, provider_pattern)
-    if provider_start then
-      vim.api.nvim_buf_set_extmark(self.state.buf, self.ns_id, line_idx - 1, provider_start - 1, {
-        end_col = provider_end,
-        hl_group = "SpinnerProvider",
-        priority = vim.highlight.priorities.user + 3,
-      })
-    end
-
-    -- Highlight time if present
-    local time_match = string.match(line, "[0-9.]+[smh]+")
-    if time_match then
-      local time_start = string.find(line, "[0-9.]+[smh]+")
-      local time_end = time_start + #time_match - 1
-      vim.api.nvim_buf_set_extmark(self.state.buf, self.ns_id, line_idx - 1, time_start - 1, {
-        end_col = time_end,
-        hl_group = "SpinnerLabel",
-        priority = vim.highlight.priorities.user + 2,
-      })
-    end
   end
 end
 
--- ============================================================================
--- ANIMATION
--- ============================================================================
-
----Start the spinner animation
----@private
 function Spinner:_start_animation()
-  if self.state.animation_timer then
-    return -- Already running
-  end
+  if self.state.animation_timer then return end
 
   self.state.animation_timer = vim.uv.new_timer()
   self.state.animation_timer:start(
     0,
     self.config.spinner.interval,
     vim.schedule_wrap(function()
-      if self.state.status == "idle" or self.state.status == "completed" or self.state.status == "error" then
+      local manager = state.instance()
+      if not manager then
+        self:_stop_animation()
+        return
+      end
+      local view = manager:get_view()
+      local active_parent = self:_get_active_parent(view)
+      if not active_parent then
+        self:_stop_animation()
+        return
+      end
+      if
+        active_parent.status == "idle"
+        or active_parent.status == "completed"
+        or active_parent.status == "error"
+        or active_parent.status == "cancelled"
+      then
         self:_stop_animation()
         return
       end
       self.state.frame = (self.state.frame % #self.config.spinner.frames) + 1
+      self.state.subagent_frame = (self.state.subagent_frame % #self.config.subagent_spinner.frames) + 1
       self:_update_display()
     end)
   )
 end
 
----Stop the spinner animation
----@private
 function Spinner:_stop_animation()
-  self:_cancel_animation_timer()
+  if self.state.animation_timer and not self.state.animation_timer:is_closing() then
+    self.state.animation_timer:stop()
+    self.state.animation_timer:close()
+  end
+  self.state.animation_timer = nil
 end
 
--- ============================================================================
--- STATE TRANSITIONS
--- ============================================================================
-
----Reset to idle state
----@private
-function Spinner:_reset_to_idle()
-  self:_debug_log("Resetting to idle")
-  self:_cancel_all_timers()
-  self:_close_window()
-
-  self.state.status = "idle"
-  self.state.request_id = nil
-  self.state.request_started = nil
-  self.state.adapter = nil
-  self.state.model = nil
-  self.state.provider = nil
-  self.state.interaction_type = nil
-  self.state.current_tool = nil
-  self.state.active_tools = {}
-  self.state.frame = 1
-end
-
----Ensure UI is visible and animating
----@private
 function Spinner:_ensure_ui_visible()
-  if not self:_is_window_valid() then self:_create_window() end
-  self:_update_display()
-  if self.state.status ~= "idle" and self.state.status ~= "completed" and self.state.status ~= "error" then
-    self:_start_animation()
-  end
-end
+  local manager = state.instance()
+  if not manager then return end
 
----Schedule cleanup after completion
----@private
-function Spinner:_schedule_cleanup()
-  self:_cancel_completion_timer()
-
-  local display_time = self.config.display.completion_display_time
-
-  self.state.completion_timer = vim.uv.new_timer()
-  self.state.completion_timer:start(
-    display_time,
-    0,
-    vim.schedule_wrap(function()
-      -- Only reset if we're still in a completion state
-      if self.state.status == "completed" or self.state.status == "error" or self.state.status == "cancelled" then
-        self:_reset_to_idle()
-      end
-    end)
-  )
-end
-
----Show completion status
----@param final_status string "completed"|"error"|"cancelled"
----@private
-function Spinner:_show_completion(final_status)
-  self:_debug_log(string.format("Showing completion: %s", final_status))
-
-  self.state.status = final_status
-  self:_stop_animation()
-  self:_update_display()
-  self:_schedule_cleanup()
-
-  self:_debug_state("After completion")
-end
-
--- ============================================================================
--- EVENT HANDLERS
--- ============================================================================
-
----Handle RequestStarted event
----@param opts table Event data
-function Spinner:handle_request_started(opts)
-  self:_debug_log("Request started: " .. vim.inspect(opts))
-
-  -- Cancel any pending cleanup from previous request
-  self:_cancel_all_timers()
-  self:_close_window()
-
-  -- Set up new request state
-  self.state.status = "sending"
-  self.state.request_id = opts and opts.id or nil
-  self.state.request_started = vim.uv.now()
-  self.state.frame = 1
-  self.state.current_tool = nil
-  self.state.active_tools = {}
-
-  -- Extract adapter info
-  if opts and opts.adapter then
-    self.state.adapter = opts.adapter.formatted_name or opts.adapter.name or nil
-    self.state.model = opts.adapter.model or nil
-    self.state.provider = opts.adapter.provider or nil
-  end
-
-  if opts and opts.interaction then self.state.interaction_type = opts.interaction end
-
-  self:_debug_state("After request_started")
-  self:_ensure_ui_visible()
-end
-
----Handle RequestStreaming event
----@param opts table Event data
-function Spinner:handle_request_streaming(opts)
-  self:_debug_log("Request streaming")
-
-  -- Only transition if we are in a valid pre-streaming state
-  if self.state.status == "sending" or self.state.status == "idle" then self.state.status = "streaming" end
-
-  -- Update provider if it becomes available during streaming
-  if opts and opts.adapter and opts.adapter.provider and not self.state.provider then
-    self.state.provider = opts.adapter.provider
-  end
-
-  -- Preserve existing request context, just update status
-  self:_debug_state("After request_streaming")
-  self:_ensure_ui_visible()
-end
-
----Handle RequestFinished event
----@param opts table Event data
-function Spinner:handle_request_finished(opts)
-  local finish_status = opts and opts.status or "unknown"
-  local finish_request_id = opts and opts.id
-
-  self:_debug_log(
-    string.format(
-      "Request finished: status=%s, request_id=%s, current_id=%s",
-      finish_status,
-      tostring(finish_request_id),
-      tostring(self.state.request_id)
-    )
-  )
-
-  -- If tools are still running, do not show completion yet
-  -- The tool_finished handler will trigger completion when all tools are done
-  if self.state.current_tool or not vim.tbl_isempty(self.state.active_tools) then
-    self:_debug_log("Tools still active, deferring completion")
+  local view = manager:get_view()
+  local active_parent = self:_get_active_parent(view)
+  if not active_parent then
+    self:_close_window()
+    self:_stop_animation()
     return
   end
 
-  -- Determine final status
-  local final_status
-  if finish_status == "success" then
-    final_status = "completed"
-  elseif finish_status == "error" then
-    final_status = "error"
-  else
-    final_status = "cancelled"
-  end
-
-  self:_show_completion(final_status)
-  self:_debug_state("After request_finished")
+  if not self:_is_window_valid() then self:_create_window() end
+  self:_update_display()
+  self:_start_animation()
 end
-
----Handle ToolStarted event
----@param opts table Event data
-function Spinner:handle_tool_started(opts)
-  local tool_name = opts and opts.name or "unknown"
-  self:_debug_log(string.format("Tool started: %s", tool_name))
-
-  -- Track active tool
-  self.state.active_tools[tool_name] = true
-  self.state.current_tool = tool_name
-  self.state.status = "tool_running"
-
-  self:_debug_state("After tool_started")
-  self:_ensure_ui_visible()
-end
-
----Handle ToolFinished event
----@param opts table Event data
-function Spinner:handle_tool_finished(opts)
-  local tool_name = opts and opts.name or "unknown"
-  self:_debug_log(string.format("Tool finished: %s", tool_name))
-
-  -- Remove from active tools
-  self.state.active_tools[tool_name] = nil
-
-  -- Update current_tool to another active tool, or nil if none
-  local remaining_tools = vim.tbl_keys(self.state.active_tools)
-  if #remaining_tools > 0 then
-    self.state.current_tool = remaining_tools[1]
-    self.state.status = "tool_running"
-  else
-    self.state.current_tool = nil
-    -- Check if the main request is still active
-    if self.state.request_id and self.state.status ~= "completed" then
-      self.state.status = "streaming"
-    else
-      -- No active tools and no active request - show completion
-      self:_show_completion("completed")
-    end
-  end
-
-  self:_debug_state("After tool_finished")
-  self:_ensure_ui_visible()
-end
-
--- ============================================================================
--- MODULE LEVEL - SINGLETON INSTANCE AND PUBLIC API
--- ============================================================================
 
 local M = {}
 local _spinner_instance = nil
 
----Setup the spinner with configuration
----@param user_config? table Configuration to merge with defaults
 function M.setup(user_config)
   if _spinner_instance then
-    vim.notify("Spinner already initialized, recreating with new config", vim.log.levels.INFO)
+    _spinner_instance:_stop_animation()
+    _spinner_instance:_close_window()
   end
 
-  -- Always create new instance (simpler, no need for backward compat)
+  if not state.instance() then state.setup(user_config or {}) end
+
+  -- Notifications are wired in init.lua to avoid duplicate attachments
+
   _spinner_instance = Spinner.new(user_config)
   _spinner_instance:_setup_highlights()
 
-  -- Setup highlight refresh on colorscheme change
-  vim.api.nvim_create_autocmd("ColorScheme", {
-    group = vim.api.nvim_create_augroup("SpinnerHighlights", { clear = true }),
+  api.nvim_create_autocmd("ColorScheme", {
+    group = api.nvim_create_augroup("SpinnerHighlightsNew", { clear = true }),
     callback = function()
       if _spinner_instance then _spinner_instance:_setup_highlights() end
     end,
   })
 
-  -- Setup event handlers
-  local group = vim.api.nvim_create_augroup("CodeCompanionSpinner", { clear = true })
+  local group = api.nvim_create_augroup("CodeCompanionSpinnerNew", { clear = true })
+  local manager = state.instance()
 
-  vim.api.nvim_create_autocmd("User", {
+  if manager then
+    manager:on("parent_updated", function()
+      _spinner_instance:_ensure_ui_visible()
+    end)
+    manager:on("parent_reset", function()
+      _spinner_instance:_ensure_ui_visible()
+    end)
+    manager:on("parent_removed", function()
+      _spinner_instance:_ensure_ui_visible()
+    end)
+    manager:on("parent_created", function()
+      _spinner_instance:_ensure_ui_visible()
+    end)
+    manager:on("active_parent_changed", function()
+      _spinner_instance:_ensure_ui_visible()
+    end)
+  end
+
+  api.nvim_create_autocmd("User", {
     pattern = {
       "CodeCompanionRequestStarted",
       "CodeCompanionRequestFinished",
@@ -790,48 +714,139 @@ function M.setup(user_config)
     },
     group = group,
     callback = function(args)
-      if not _spinner_instance then return end
+      if not manager or not _spinner_instance then return end
+      if args.data and _spinner_instance:_is_child_bufnr(args.data.bufnr) then return end
       if args.match == "CodeCompanionRequestStarted" then
-        _spinner_instance:handle_request_started(args.data)
+        manager:on_request_started(args.data and args.data.bufnr, args.data and args.data.id or nil)
+        if args.data and args.data.adapter then manager:on_chat_adapter(args.data.bufnr, args.data.adapter) end
+        if args.data and args.data.interaction then manager:set_interaction(args.data.bufnr, args.data.interaction) end
       elseif args.match == "CodeCompanionRequestStreaming" then
-        _spinner_instance:handle_request_streaming(args.data)
+        manager:on_request_streaming(args.data and args.data.bufnr)
+        if args.data and args.data.adapter then manager:on_chat_adapter(args.data.bufnr, args.data.adapter) end
       elseif args.match == "CodeCompanionRequestFinished" then
-        _spinner_instance:handle_request_finished(args.data)
+        manager:on_request_finished(args.data and args.data.bufnr, args.data and args.data.status or "unknown")
       end
+      _spinner_instance:_ensure_ui_visible()
     end,
   })
 
-  vim.api.nvim_create_autocmd("User", {
+  api.nvim_create_autocmd("User", {
     pattern = {
       "CodeCompanionToolStarted",
       "CodeCompanionToolFinished",
     },
     group = group,
     callback = function(args)
-      if not _spinner_instance then return end
+      if not manager or not _spinner_instance then return end
+      if args.data and _spinner_instance:_is_child_bufnr(args.data.bufnr) then return end
       if args.match == "CodeCompanionToolStarted" then
-        _spinner_instance:handle_tool_started(args.data)
+        manager:on_tool_started(
+          args.data and args.data.bufnr,
+          args.data and (args.data.name or args.data.tool) or "unknown"
+        )
       elseif args.match == "CodeCompanionToolFinished" then
-        _spinner_instance:handle_tool_finished(args.data)
+        manager:on_tool_finished(
+          args.data and args.data.bufnr,
+          args.data and (args.data.name or args.data.tool) or "unknown"
+        )
+      end
+      _spinner_instance:_ensure_ui_visible()
+    end,
+  })
+
+  api.nvim_create_autocmd("User", {
+    pattern = {
+      "CodeCompanionChatStopped",
+      "CodeCompanionChatClosed",
+      "CodeCompanionChatOpened",
+      "CodeCompanionChatCreated",
+      "CodeCompanionChatAdapter",
+      "CodeCompanionChatModel",
+    },
+    group = group,
+    callback = function(args)
+      if not manager or not _spinner_instance then return end
+      if args.data and _spinner_instance:_is_child_bufnr(args.data.bufnr) then return end
+      if args.match == "CodeCompanionChatClosed" then
+        manager:on_chat_closed(args.data and args.data.bufnr)
+      elseif args.match == "CodeCompanionChatOpened" or args.match == "CodeCompanionChatCreated" then
+        manager:on_chat_opened(args.data and args.data.bufnr)
+      elseif args.match == "CodeCompanionChatAdapter" then
+        manager:on_chat_adapter(args.data and args.data.bufnr, args.data and args.data.adapter)
+      elseif args.match == "CodeCompanionChatModel" then
+        manager:on_chat_model(args.data and args.data.bufnr, args.data and args.data.adapter)
+      end
+      _spinner_instance:_ensure_ui_visible()
+    end,
+  })
+
+  api.nvim_create_autocmd("User", {
+    pattern = {
+      "CCExtraSubagentStarted",
+      "CCExtraSubagentProgress",
+      "CCExtraSubagentCompleted",
+    },
+    group = group,
+    callback = function(args)
+      if not manager then return end
+      if args.match == "CCExtraSubagentStarted" then
+        manager:on_subagent_started(
+          args.data and args.data.parent_bufnr,
+          args.data and args.data.child_bufnr,
+          args.data or {}
+        )
+      elseif args.match == "CCExtraSubagentProgress" then
+        manager:on_subagent_progress(
+          args.data and args.data.parent_bufnr,
+          args.data and args.data.child_bufnr,
+          args.data and args.data.tool_count
+        )
+      elseif args.match == "CCExtraSubagentCompleted" then
+        manager:on_subagent_completed(
+          args.data and args.data.parent_bufnr,
+          args.data and args.data.child_bufnr,
+          args.data and args.data.status,
+          args.data and args.data.duration_ms,
+          args.data and args.data.tool_count
+        )
+      end
+      _spinner_instance:_ensure_ui_visible()
+    end,
+  })
+
+  api.nvim_create_autocmd({ "WinEnter", "BufEnter" }, {
+    group = group,
+    callback = function(args)
+      if not manager then return end
+      local bufnr = args.buf
+      if api.nvim_buf_is_valid(bufnr) and api.nvim_get_option_value("filetype", { buf = bufnr }) == "codecompanion" then
+        manager:set_active_parent(bufnr)
+        _spinner_instance:_ensure_ui_visible()
       end
     end,
   })
 
+  api.nvim_create_user_command("SpinnerNewStop", function()
+    M.stop()
+  end, { desc = "Stop the CodeCompanion spinner (new)" })
+end
+
+function M.stop()
   if _spinner_instance then
-    _spinner_instance:_debug_log("Spinner configured: " .. vim.inspect(_spinner_instance.config))
+    _spinner_instance:_stop_animation()
+    _spinner_instance:_close_window()
   end
 end
 
----Stop the spinner (manual control)
-function M.stop()
-  if _spinner_instance then _spinner_instance:_reset_to_idle() end
+function M.get_state()
+  local manager = state.instance()
+  if not manager then return {} end
+  return manager:get_view()
 end
 
----Get current state (for debugging)
----@return table
-function M.get_state()
-  if _spinner_instance then return vim.deepcopy(_spinner_instance.state) end
-  return {}
+function M.get_config()
+  if _spinner_instance then return vim.deepcopy(_spinner_instance.config) end
+  return vim.deepcopy(DEFAULT_CONFIG)
 end
 
 return M

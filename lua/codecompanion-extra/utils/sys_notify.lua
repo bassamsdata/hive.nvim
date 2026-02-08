@@ -23,7 +23,7 @@ function Noti.smart_notify(title, message, fallback)
   end
 
   if sys == "Darwin" then
-    local sound = (info.machine == "arm64") and "Crystal" or "Glass"
+    local sound = (info.machine == "arm64") and "Submarine" or "Glass"
     local script = string.format("display notification %q with title %q sound name %q", message, title, sound)
     vim.system({ "osascript", "-e", script }, { detach = true }, function(obj)
       if obj.code ~= 0 then notify_fallback() end
@@ -36,5 +36,9 @@ function Noti.smart_notify(title, message, fallback)
     notify_fallback()
   end
 end
+-- Available macOS notification sounds:
+--   "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi",
+--   "Submarine", "Tink", "Basso", "Blow", "Bottle", "Frog",
+--   "Marimba", "Siren", "Trumpet", "Uptempo", "Crystal"
 
 return Noti
