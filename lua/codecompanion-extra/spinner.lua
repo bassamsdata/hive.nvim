@@ -1,8 +1,10 @@
--- New spinner implementation backed by state.lua (does not replace spinner.lua)
+-- Spinner UI backed by state.lua
+-- Renders a floating window with status, adapter info, and subagent progress
 
 local state = require("codecompanion-extra.state")
 
 local api = vim.api
+local uv = vim.uv
 
 -- ============================================================================
 -- CONSTANTS AND CONFIGURATION DEFAULTS
@@ -28,8 +30,10 @@ local CONSTANTS = {
   },
 
   -- stylua: ignore start
-  SPINNER_FRAMES = {
+  SPINNER_FRAMES                   = {
     corner        = { "◜", "◝", "◞", "◟" },
+    toggle        = { "⊶", "⊷", },
+    toggle3       = { "□", "■" },
     braille       = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" },
     building      = { "⣼", "⣹", "⢻", "⠿", "⡟", "⣏", "⣧", "⣶" },
     simple_pounce = { ".  ", ".. ", "...", " ..", "  .", "   " },
@@ -46,7 +50,7 @@ local CONSTANTS = {
     moon          = { "🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘" },
     minimal       = { ".", "..", "..." },
     bars          = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂" },
-    slide_bar     = { "===     ", " ===    ", "  ===   ", "   ===  ", "  ===   ", " ===    " },
+    slide_bar     = { "=== ", " === ", " === ", " === ", " === ", " === " },
     bounce        = {
       "⠁", "⠁", "⠉", "⠙", "⠚", "⠒", "⠂", "⠂", "⠒", "⠲", "⠴", "⠤", "⠄", "⠄", "⠤", "⠠",
       "⠠", "⠤", "⠦", "⠖", "⠒", "⠐", "⠐", "⠒", "⠓", "⠋", "⠉", "⠈", "⠈",
@@ -168,27 +172,39 @@ end
 
 function Spinner:_get_elapsed_time(parent)
   if not parent.request_started then return "0.0s" end
-  local elapsed = (vim.uv.now() - parent.request_started) / 1000
+  local elapsed = (uv.now() - parent.request_started) / 1000
   return self:_format_time(elapsed)
 end
 
-function Spinner:_get_total_time(parent, bufnr)
+function Spinner:_get_final_duration(parent, bufnr)
   if parent.duration_ms then
     if bufnr then self.state.last_parent_durations[bufnr] = parent.duration_ms end
     return self:_format_time(parent.duration_ms / 1000)
   end
+  if parent.completed_at and parent.total_started then
+    local duration_ms = parent.completed_at - parent.total_started
+    if bufnr then self.state.last_parent_durations[bufnr] = duration_ms end
+    return self:_format_time(duration_ms / 1000)
+  end
   if bufnr and self.state.last_parent_durations[bufnr] then
     return self:_format_time(self.state.last_parent_durations[bufnr] / 1000)
   end
-  if not parent.total_started then return self:_get_elapsed_time(parent) end
-  local elapsed = (vim.uv.now() - parent.total_started) / 1000
+  local start = parent.total_started or parent.request_started
+  if not start then return "0.0s" end
+  local elapsed = (uv.now() - start) / 1000
   if bufnr then self.state.last_parent_durations[bufnr] = elapsed * 1000 end
   return self:_format_time(elapsed)
 end
 
 function Spinner:_get_total_elapsed_time(parent)
   if not parent.total_started then return self:_get_elapsed_time(parent) end
-  local elapsed = (vim.uv.now() - parent.total_started) / 1000
+  local elapsed = (uv.now() - parent.total_started) / 1000
+  return self:_format_time(elapsed)
+end
+
+function Spinner:_get_inline_elapsed(inline)
+  if not inline or not inline.started_at then return "0.0s" end
+  local elapsed = (uv.now() - inline.started_at) / 1000
   return self:_format_time(elapsed)
 end
 
@@ -216,6 +232,39 @@ function Spinner:_get_focused_parent_bufnr()
   end
 
   return nil
+end
+
+---@param args table
+---@return number|nil
+function Spinner:_event_bufnr(args)
+  return (args.data and args.data.bufnr) or args.buf
+end
+
+---@param args table
+---@return boolean
+function Spinner:_is_chat_request_event(args)
+  local data = args.data or {}
+  local bufnr = self:_event_bufnr(args)
+  if not bufnr or not api.nvim_buf_is_valid(bufnr) then return false end
+  if data.interaction and data.interaction ~= "chat" then return false end
+  local ft = api.nvim_get_option_value("filetype", { buf = bufnr })
+  return ft == "codecompanion"
+end
+
+---@param args table
+---@return boolean
+function Spinner:_is_inline_request_event(args)
+  local data = args.data or {}
+  return data.interaction == "inline"
+end
+
+---@param args table
+---@return boolean
+function Spinner:_is_chat_tool_event(args)
+  local bufnr = self:_event_bufnr(args)
+  if not bufnr or not api.nvim_buf_is_valid(bufnr) then return false end
+  local ft = api.nvim_get_option_value("filetype", { buf = bufnr })
+  return ft == "codecompanion"
 end
 
 function Spinner:_get_active_parent(view)
@@ -289,11 +338,12 @@ function Spinner:_build_status_line(parent, active_parent_count, bufnr)
   if self.config.display.show_timestamps then
     local is_terminal = parent.status == "completed" or parent.status == "error" or parent.status == "cancelled"
     if is_terminal then
-      table.insert(chunks, { " · " .. self:_get_total_time(parent, bufnr), "SpinnerLabel" })
+      local final_duration = self:_get_final_duration(parent, bufnr)
+      table.insert(chunks, { " · " .. final_duration, "SpinnerLabel" })
     else
       table.insert(chunks, { " [" .. self:_get_elapsed_time(parent) .. "]", "SpinnerLabel" })
       if parent.total_started then
-        local total_elapsed = (vim.uv.now() - parent.total_started) / 1000
+        local total_elapsed = (uv.now() - parent.total_started) / 1000
         if total_elapsed >= 60 then
           table.insert(chunks, { " · " .. self:_get_total_elapsed_time(parent), "SpinnerDim" })
         end
@@ -309,7 +359,7 @@ function Spinner:_build_subagent_line(info)
   name = name:sub(1, 1):upper() .. name:sub(2)
   local time_str = self.config.display.show_subagent_timers
       and (info.duration_ms and self:_format_time(info.duration_ms / 1000) or self:_format_time(
-        (vim.uv.now() - info.start_time) / 1000
+        (uv.now() - info.start_time) / 1000
       ))
     or nil
   local calls_str = info.tool_count > 0 and string.format("%d calls", info.tool_count) or nil
@@ -398,19 +448,78 @@ function Spinner:_build_subagent_lines(subagents)
   return lines
 end
 
+function Spinner:_build_inline_line(inline)
+  local chunks = {}
+
+  if inline.status == "sending" then
+    table.insert(chunks, { CONSTANTS.STATUS.SENDING .. " ", "SpinnerActive" })
+    table.insert(chunks, { self:_get_spinner_char(), "SpinnerActive" })
+  elseif inline.status == "completed" then
+    table.insert(chunks, { CONSTANTS.STATUS.COMPLETED, "SpinnerSuccess" })
+  elseif inline.status == "error" then
+    table.insert(chunks, { CONSTANTS.STATUS.ERROR, "SpinnerError" })
+  else
+    table.insert(chunks, { "Inline ", "SpinnerActive" })
+    table.insert(chunks, { self:_get_spinner_char(), "SpinnerActive" })
+  end
+
+  if self.config.display.show_timestamps then
+    local is_terminal = inline.status == "completed" or inline.status == "error"
+    if is_terminal and inline.duration_ms then
+      table.insert(chunks, { " · " .. self:_format_time(inline.duration_ms / 1000), "SpinnerLabel" })
+    else
+      table.insert(chunks, { " [" .. self:_get_inline_elapsed(inline) .. "]", "SpinnerLabel" })
+    end
+  end
+
+  table.insert(chunks, { " (inline)", "SpinnerDim" })
+
+  return chunks
+end
+
+function Spinner:_build_inline_adapter_line(inline)
+  if not self.config.display.show_model then return nil end
+  local chunks = {}
+  local model = inline.model
+  if type(model) == "table" then model = model.name or model.default or model.id or model.model end
+  if model then table.insert(chunks, { tostring(model), "SpinnerInfo" }) end
+  if inline.adapter then
+    if #chunks > 0 then table.insert(chunks, { " ", "SpinnerInfo" }) end
+    table.insert(chunks, { "(", "SpinnerDim" })
+    table.insert(chunks, { inline.adapter, "SpinnerInfo" })
+    table.insert(chunks, { ")", "SpinnerDim" })
+  end
+  if #chunks == 0 then return nil end
+  return chunks
+end
+
 function Spinner:_build_display_lines()
   local manager = state.instance()
   if not manager then return {} end
-  local view = manager:get_parent_view()
-  local active_parent, active_bufnr = self:_get_active_parent(view)
-  if not active_parent then return {} end
+  local view = manager:get_view()
+  local parent_view = manager:get_parent_view()
+  local active_parent, active_bufnr = self:_get_active_parent(parent_view)
+
+  local lines = {}
+  local inline = view.inline or {}
+  if inline.active then
+    local inline_adapter_line = self:_build_inline_adapter_line(inline)
+    if inline_adapter_line then table.insert(lines, inline_adapter_line) end
+    table.insert(lines, self:_build_inline_line(inline))
+  end
+
+  if not active_parent then
+    for _, line in ipairs(lines) do
+      table.insert(line, { " ", "SpinnerDim" })
+    end
+    return lines
+  end
 
   local active_parent_count = 0
-  for _, parent in pairs(view.parents) do
+  for _, parent in pairs(parent_view.parents) do
     if parent.status ~= "idle" then active_parent_count = active_parent_count + 1 end
   end
 
-  local lines = {}
   local adapter_line = self:_build_adapter_line(active_parent)
   if adapter_line then table.insert(lines, adapter_line) end
 
@@ -524,29 +633,13 @@ function Spinner:_update_display()
         if type(text) == "string" then
           table.insert(sanitized, { text, hl })
         elseif text ~= nil then
-          if not logged_invalid then
-            vim.notify(
-              "SpinnerNew: invalid virt_text chunk at line "
-                .. i
-                .. " -> "
-                .. vim.inspect(chunk)
-                .. " (coercing to string)",
-              vim.log.levels.WARN
-            )
-            logged_invalid = true
-          end
+          if not logged_invalid then logged_invalid = true end
           table.insert(sanitized, { tostring(text), hl })
         end
       elseif type(chunk) == "string" then
         table.insert(sanitized, { chunk, "SpinnerDim" })
       else
-        if chunk ~= nil and not logged_invalid then
-          vim.notify(
-            "SpinnerNew: invalid virt_text chunk at line " .. i .. " -> " .. vim.inspect(chunk) .. " (dropping)",
-            vim.log.levels.WARN
-          )
-          logged_invalid = true
-        end
+        if chunk ~= nil and not logged_invalid then logged_invalid = true end
       end
     end
     display_lines[i] = sanitized
@@ -602,10 +695,37 @@ function Spinner:_update_display()
   end
 end
 
+---Check if any interaction needs an animated spinner (not just a static "Done" display)
+---@param view CCExtra.StateView
+---@return boolean
+function Spinner:_needs_animation(view)
+  local inline = view.inline or {}
+  if inline.active and inline.status == "sending" then return true end
+
+  local active_parent = self:_get_active_parent(view)
+  if not active_parent then return false end
+
+  return active_parent.status ~= "idle"
+    and active_parent.status ~= "completed"
+    and active_parent.status ~= "error"
+    and active_parent.status ~= "cancelled"
+end
+
+---Check if any interaction has content to display (including terminal states like "Done")
+---@param view CCExtra.StateView
+---@return boolean
+function Spinner:_has_visible_content(view)
+  local inline = view.inline or {}
+  if inline.active then return true end
+
+  local active_parent = self:_get_active_parent(view)
+  return active_parent ~= nil
+end
+
 function Spinner:_start_animation()
   if self.state.animation_timer then return end
 
-  self.state.animation_timer = vim.uv.new_timer()
+  self.state.animation_timer = uv.new_timer()
   self.state.animation_timer:start(
     0,
     self.config.spinner.interval,
@@ -616,17 +736,7 @@ function Spinner:_start_animation()
         return
       end
       local view = manager:get_view()
-      local active_parent = self:_get_active_parent(view)
-      if not active_parent then
-        self:_stop_animation()
-        return
-      end
-      if
-        active_parent.status == "idle"
-        or active_parent.status == "completed"
-        or active_parent.status == "error"
-        or active_parent.status == "cancelled"
-      then
+      if not self:_needs_animation(view) then
         self:_stop_animation()
         return
       end
@@ -650,8 +760,7 @@ function Spinner:_ensure_ui_visible()
   if not manager then return end
 
   local view = manager:get_view()
-  local active_parent = self:_get_active_parent(view)
-  if not active_parent then
+  if not self:_has_visible_content(view) then
     self:_close_window()
     self:_stop_animation()
     return
@@ -659,7 +768,7 @@ function Spinner:_ensure_ui_visible()
 
   if not self:_is_window_valid() then self:_create_window() end
   self:_update_display()
-  self:_start_animation()
+  if self:_needs_animation(view) then self:_start_animation() end
 end
 
 local M = {}
@@ -673,11 +782,10 @@ function M.setup(user_config)
 
   if not state.instance() then state.setup(user_config or {}) end
 
-  -- Notifications are wired in init.lua to avoid duplicate attachments
-
   _spinner_instance = Spinner.new(user_config)
   _spinner_instance:_setup_highlights()
 
+  -- TODO: Move highlights to its module
   api.nvim_create_autocmd("ColorScheme", {
     group = api.nvim_create_augroup("SpinnerHighlightsNew", { clear = true }),
     callback = function()
@@ -704,8 +812,12 @@ function M.setup(user_config)
     manager:on("active_parent_changed", function()
       _spinner_instance:_ensure_ui_visible()
     end)
+    manager:on("inline_updated", function()
+      _spinner_instance:_ensure_ui_visible()
+    end)
   end
 
+  -- Request lifecycle: route by interaction type (chat vs inline)
   api.nvim_create_autocmd("User", {
     pattern = {
       "CodeCompanionRequestStarted",
@@ -715,17 +827,32 @@ function M.setup(user_config)
     group = group,
     callback = function(args)
       if not manager or not _spinner_instance then return end
-      if args.data and _spinner_instance:_is_child_bufnr(args.data.bufnr) then return end
-      if args.match == "CodeCompanionRequestStarted" then
-        manager:on_request_started(args.data and args.data.bufnr, args.data and args.data.id or nil)
-        if args.data and args.data.adapter then manager:on_chat_adapter(args.data.bufnr, args.data.adapter) end
-        if args.data and args.data.interaction then manager:set_interaction(args.data.bufnr, args.data.interaction) end
-      elseif args.match == "CodeCompanionRequestStreaming" then
-        manager:on_request_streaming(args.data and args.data.bufnr)
-        if args.data and args.data.adapter then manager:on_chat_adapter(args.data.bufnr, args.data.adapter) end
-      elseif args.match == "CodeCompanionRequestFinished" then
-        manager:on_request_finished(args.data and args.data.bufnr, args.data and args.data.status or "unknown")
+      local data = args.data or {}
+      local event_bufnr = data.bufnr
+
+      if event_bufnr and _spinner_instance:_is_child_bufnr(event_bufnr) then return end
+
+      if data.interaction == "inline" then
+        -- Inline interaction: route to inline state
+        if args.match == "CodeCompanionRequestStarted" then
+          manager:on_inline_started(event_bufnr, data.adapter)
+        elseif args.match == "CodeCompanionRequestFinished" then
+          manager:on_inline_finished(data.status == "error" and "error" or nil)
+        end
+        -- No streaming for inline — intentionally no handler
+      else
+        -- Chat interaction (default)
+        if args.match == "CodeCompanionRequestStarted" then
+          manager:on_request_started(event_bufnr, data.id)
+          if data.adapter then manager:on_chat_adapter(event_bufnr, data.adapter) end
+        elseif args.match == "CodeCompanionRequestStreaming" then
+          manager:on_request_streaming(event_bufnr)
+          if data.adapter then manager:on_chat_adapter(event_bufnr, data.adapter) end
+        elseif args.match == "CodeCompanionRequestFinished" then
+          manager:on_request_finished(event_bufnr, data.status or "unknown")
+        end
       end
+
       _spinner_instance:_ensure_ui_visible()
     end,
   })
@@ -738,17 +865,13 @@ function M.setup(user_config)
     group = group,
     callback = function(args)
       if not manager or not _spinner_instance then return end
-      if args.data and _spinner_instance:_is_child_bufnr(args.data.bufnr) then return end
+      if not _spinner_instance:_is_chat_tool_event(args) then return end
+      local bufnr = _spinner_instance:_event_bufnr(args)
+      if bufnr and _spinner_instance:_is_child_bufnr(bufnr) then return end
       if args.match == "CodeCompanionToolStarted" then
-        manager:on_tool_started(
-          args.data and args.data.bufnr,
-          args.data and (args.data.name or args.data.tool) or "unknown"
-        )
+        manager:on_tool_started(bufnr, args.data and (args.data.name or args.data.tool) or "unknown")
       elseif args.match == "CodeCompanionToolFinished" then
-        manager:on_tool_finished(
-          args.data and args.data.bufnr,
-          args.data and (args.data.name or args.data.tool) or "unknown"
-        )
+        manager:on_tool_finished(bufnr, args.data and (args.data.name or args.data.tool) or "unknown")
       end
       _spinner_instance:_ensure_ui_visible()
     end,
@@ -762,34 +885,70 @@ function M.setup(user_config)
       "CodeCompanionChatCreated",
       "CodeCompanionChatAdapter",
       "CodeCompanionChatModel",
+      "CodeCompanionChatSubmitted",
+      "CodeCompanionChatDone",
     },
     group = group,
     callback = function(args)
       if not manager or not _spinner_instance then return end
-      if args.data and _spinner_instance:_is_child_bufnr(args.data.bufnr) then return end
-      if args.match == "CodeCompanionChatClosed" then
-        manager:on_chat_closed(args.data and args.data.bufnr)
-      elseif args.match == "CodeCompanionChatOpened" or args.match == "CodeCompanionChatCreated" then
-        manager:on_chat_opened(args.data and args.data.bufnr)
-      elseif args.match == "CodeCompanionChatAdapter" then
-        manager:on_chat_adapter(args.data and args.data.bufnr, args.data and args.data.adapter)
-      elseif args.match == "CodeCompanionChatModel" then
-        manager:on_chat_model(args.data and args.data.bufnr, args.data and args.data.adapter)
-      end
+
+      local bufnr = _spinner_instance:_event_bufnr(args)
+      if not bufnr or _spinner_instance:_is_child_bufnr(bufnr) then return end
+
+      local match = args.match
+      local data = args.data or {}
+
+      local handlers = {
+        CodeCompanionChatSubmitted = function()
+          manager:on_chat_submitted(bufnr)
+        end,
+        CodeCompanionChatDone = function()
+          manager:on_chat_done(bufnr)
+        end,
+        CodeCompanionChatStopped = function()
+          manager:on_chat_stopped(bufnr)
+        end,
+        CodeCompanionChatClosed = function()
+          manager:on_chat_stopped(bufnr)
+          manager:on_chat_closed(bufnr)
+        end,
+        CodeCompanionChatOpened = function()
+          manager:on_chat_opened(bufnr)
+        end,
+        CodeCompanionChatCreated = function()
+          manager:on_chat_opened(bufnr)
+        end,
+        CodeCompanionChatAdapter = function()
+          manager:on_chat_adapter(bufnr, data.adapter)
+        end,
+        CodeCompanionChatModel = function()
+          manager:on_chat_model(bufnr, data.model or data.adapter)
+        end,
+      }
+
+      local handler = handlers[match]
+      if handler then handler() end
+
       _spinner_instance:_ensure_ui_visible()
     end,
   })
 
+  -- Subagent events and InlineFinished (redundant safety cleanup)
   api.nvim_create_autocmd("User", {
     pattern = {
       "CCExtraSubagentStarted",
       "CCExtraSubagentProgress",
       "CCExtraSubagentCompleted",
+      "CodeCompanionInlineFinished",
     },
     group = group,
     callback = function(args)
       if not manager then return end
-      if args.match == "CCExtraSubagentStarted" then
+      if args.match == "CodeCompanionInlineFinished" then
+        -- Redundant safety: inline tracking is primarily via RequestStarted/Finished
+        -- with interaction="inline", but InlineFinished ensures cleanup if missed
+        manager:on_inline_finished()
+      elseif args.match == "CCExtraSubagentStarted" then
         manager:on_subagent_started(
           args.data and args.data.parent_bufnr,
           args.data and args.data.child_bufnr,

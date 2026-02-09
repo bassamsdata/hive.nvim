@@ -1,5 +1,29 @@
 -- State manager for CodeCompanion Extra UI surfaces
--- Owns parent/subagent state and timers, exposes a safe view for renderers
+-- Owns parent/subagent/inline state and timers, exposes a safe view for renderers
+--
+-- Interaction types:
+--   "chat"   → tracked in self.parents[bufnr] (CCExtra.ParentState)
+--   "inline" → tracked in self.inline (CCExtra.InlineState)
+--
+-- Adding a future interaction type (e.g. "background"):
+--   1. Add a CCExtra.<Type>State class and field on StateManager
+--   2. Add on_<type>_started / on_<type>_finished lifecycle methods
+--   3. Add the state to get_view() return value
+--   4. Wire event routing in spinner.lua
+
+local DEBUG_LOG_PATH = vim.fn.stdpath("data") .. "/ccextra_debug.log"
+
+local function debug_log(msg)
+  local f = io.open(DEBUG_LOG_PATH, "a")
+  if f then
+    f:write(string.format("[%s] [state] %s\n", os.date("%H:%M:%S"), msg))
+    f:close()
+  end
+end
+
+-- ============================================================================
+-- Type Definitions
+-- ============================================================================
 
 ---@class CCExtra.SubagentInfo
 ---@field child_bufnr number
@@ -18,6 +42,7 @@
 ---@field request_started? number
 ---@field total_started? number
 ---@field duration_ms? number
+---@field completed_at? number
 ---@field request_finished boolean
 ---@field request_final_status? "completed"|"error"|"cancelled"
 ---@field adapter? string
@@ -31,17 +56,39 @@
 ---@field completion_timer? uv.uv_timer_t
 ---@field subagent_cleanup_timers table<number, uv.uv_timer_t>
 
+---@class CCExtra.InlineState
+---@field active boolean Whether an inline interaction is in progress or showing completion
+---@field status "idle"|"sending"|"completed"|"error"
+---@field request_id? number|string
+---@field started_at? number vim.uv.now() milliseconds
+---@field completed_at? number
+---@field duration_ms? number
+---@field adapter? string
+---@field model? string
+---@field provider? string
+---@field bufnr? number The code buffer being modified
+---@field completion_timer? uv.uv_timer_t
+
 ---@class CCExtra.StateView
 ---@field parents table<number, table>
 ---@field active_parent_bufnr? number
+---@field inline table
 
 ---@class CCExtra.StateManager
 ---@field config table
 ---@field parents table<number, CCExtra.ParentState>
+---@field inline CCExtra.InlineState
 ---@field active_parent_bufnr number|nil
 ---@field callbacks table<string, function[]>
+---@field completion_timers table<number, userdata>
 local StateManager = {}
 StateManager.__index = StateManager
+
+local COMPLETION_DISPLAY_TIME = 3000 -- ms to show "completed" before transitioning to idle
+
+-- ============================================================================
+-- Constructor
+-- ============================================================================
 
 ---@param config table
 ---@return CCExtra.StateManager
@@ -49,10 +96,16 @@ function StateManager.new(config)
   local self = setmetatable({}, StateManager)
   self.config = config or {}
   self.parents = {}
+  self.inline = StateManager._create_inline_state()
   self.active_parent_bufnr = nil
   self.callbacks = {}
+  self.completion_timers = {}
   return self
 end
+
+-- ============================================================================
+-- Event Callback System
+-- ============================================================================
 
 ---Register a callback for state events
 ---@param event string
@@ -72,6 +125,10 @@ function StateManager:_emit(event, ...)
   end
 end
 
+-- ============================================================================
+-- Chat Parent State
+-- ============================================================================
+
 ---@param bufnr number
 ---@return CCExtra.ParentState
 function StateManager:_create_parent_state(bufnr)
@@ -82,6 +139,7 @@ function StateManager:_create_parent_state(bufnr)
     request_started = nil,
     total_started = nil,
     duration_ms = nil,
+    completed_at = nil,
     request_finished = false,
     request_final_status = nil,
     adapter = nil,
@@ -134,6 +192,7 @@ function StateManager:reset_parent_state(bufnr)
   parent.request_started = nil
   parent.total_started = nil
   parent.duration_ms = nil
+  parent.completed_at = nil
   parent.request_finished = false
   parent.request_final_status = nil
   parent.current_tool = nil
@@ -143,7 +202,7 @@ function StateManager:reset_parent_state(bufnr)
   self:_emit("parent_reset", bufnr, parent)
 end
 
----Update adapter/model/provider
+---Update adapter/model/provider on a chat parent
 ---@param bufnr number
 ---@param adapter table
 function StateManager:set_adapter(bufnr, adapter)
@@ -173,14 +232,58 @@ function StateManager:on_request_started(bufnr, request_id)
   if not parent then return end
   parent.status = "sending"
   parent.request_id = request_id
-  parent.request_started = vim.uv.now()
+  local now = vim.uv.now()
+  parent.request_started = now
   parent.request_finished = false
   parent.request_final_status = nil
   parent.duration_ms = nil
-  parent.total_started = parent.request_started
+  parent.completed_at = nil
   parent.current_tool = nil
   parent.active_tools = {}
   self:_emit("parent_updated", bufnr, parent)
+end
+
+---@param bufnr number
+function StateManager:on_chat_submitted(bufnr)
+  local parent = self:get_parent(bufnr, true)
+  if not parent then return end
+  if parent.total_started and not parent.completed_at then return end
+  parent.total_started = vim.uv.now()
+  parent.duration_ms = nil
+  parent.completed_at = nil
+  self:_emit("parent_updated", bufnr, parent)
+end
+
+---@param bufnr number
+---@param final_status "completed"|"cancelled"
+function StateManager:_finalize_chat_duration(bufnr, final_status)
+  local parent = self:get_parent(bufnr, true)
+  if not parent then return end
+  if not parent.total_started and not parent.request_started then return end
+
+  parent.completed_at = parent.completed_at or vim.uv.now()
+  if parent.total_started then
+    parent.duration_ms = parent.completed_at - parent.total_started
+  elseif parent.request_started then
+    parent.duration_ms = parent.completed_at - parent.request_started
+  end
+
+  if parent.status ~= "error" and parent.status ~= "cancelled" and parent.status ~= "completed" then
+    parent.status = final_status
+    self:schedule_completion(bufnr)
+  end
+
+  self:_emit("parent_updated", bufnr, parent)
+end
+
+---@param bufnr number
+function StateManager:on_chat_done(bufnr)
+  self:_finalize_chat_duration(bufnr, "completed")
+end
+
+---@param bufnr number
+function StateManager:on_chat_stopped(bufnr)
+  self:_finalize_chat_duration(bufnr, "cancelled")
 end
 
 ---@param bufnr number
@@ -194,6 +297,7 @@ end
 ---@param bufnr number
 ---@param status "success"|"error"|"cancelled"|string
 function StateManager:on_request_finished(bufnr, status)
+  debug_log("on_request_finished called, bufnr=" .. tostring(bufnr) .. " status=" .. tostring(status))
   local parent = self:get_parent(bufnr, true)
   if not parent then return end
   local final_status
@@ -210,18 +314,47 @@ function StateManager:on_request_finished(bufnr, status)
 
   if not parent.current_tool and vim.tbl_isempty(parent.active_tools) then
     parent.status = final_status
-    if parent.total_started then
-      parent.duration_ms = vim.uv.now() - parent.total_started
-    elseif parent.request_started then
-      parent.duration_ms = vim.uv.now() - parent.request_started
-    end
-    self:schedule_completion(bufnr)
+    debug_log("  set status to: " .. final_status)
   end
 
   if parent.status == "completed" or parent.status == "error" or parent.status == "cancelled" then
     self:_emit("request_completed", bufnr, parent)
+    self:_start_completion_timer(bufnr)
   end
   self:_emit("parent_updated", bufnr, parent)
+end
+
+---Start a timer to transition parent from completed/error/cancelled to idle
+---@param bufnr number
+function StateManager:_start_completion_timer(bufnr)
+  if self.completion_timers[bufnr] then
+    self.completion_timers[bufnr]:stop()
+    self.completion_timers[bufnr]:close()
+  end
+
+  local timer = vim.uv.new_timer()
+  self.completion_timers[bufnr] = timer
+  timer:start(
+    COMPLETION_DISPLAY_TIME,
+    0,
+    vim.schedule_wrap(function()
+      debug_log("completion timer fired for bufnr=" .. tostring(bufnr))
+      local parent = self:get_parent(bufnr, true)
+      if parent and (parent.status == "completed" or parent.status == "error" or parent.status == "cancelled") then
+        parent.status = "idle"
+        parent.request_id = nil
+        parent.request_finished = false
+        parent.request_final_status = nil
+        debug_log("  transitioned to idle")
+        self:_emit("parent_updated", bufnr, parent)
+      end
+      if self.completion_timers[bufnr] then
+        self.completion_timers[bufnr]:stop()
+        self.completion_timers[bufnr]:close()
+        self.completion_timers[bufnr] = nil
+      end
+    end)
+  )
 end
 
 ---@param bufnr number
@@ -250,22 +383,10 @@ function StateManager:on_tool_finished(bufnr, tool_name)
     parent.current_tool = nil
     if parent.request_finished then
       parent.status = parent.request_final_status or "completed"
-      if parent.total_started then
-        parent.duration_ms = vim.uv.now() - parent.total_started
-      elseif parent.request_started then
-        parent.duration_ms = vim.uv.now() - parent.request_started
-      end
-      self:schedule_completion(bufnr)
     elseif parent.request_id and parent.status ~= "completed" then
       parent.status = "streaming"
     else
-      parent.status = "completed"
-      if parent.total_started then
-        parent.duration_ms = vim.uv.now() - parent.total_started
-      elseif parent.request_started then
-        parent.duration_ms = vim.uv.now() - parent.request_started
-      end
-      self:schedule_completion(bufnr)
+      parent.status = "streaming"
     end
   end
 
@@ -274,6 +395,10 @@ function StateManager:on_tool_finished(bufnr, tool_name)
   end
   self:_emit("parent_updated", bufnr, parent)
 end
+
+-- ============================================================================
+-- Subagent State
+-- ============================================================================
 
 ---@param parent_bufnr number
 ---@param child_bufnr number
@@ -325,6 +450,104 @@ function StateManager:on_subagent_completed(parent_bufnr, child_bufnr, status, d
   self:_emit("parent_updated", parent_bufnr, parent)
 end
 
+-- ============================================================================
+-- Inline State
+-- ============================================================================
+
+---@return CCExtra.InlineState
+function StateManager._create_inline_state()
+  return {
+    active = false,
+    status = "idle",
+    request_id = nil,
+    started_at = nil,
+    completed_at = nil,
+    duration_ms = nil,
+    adapter = nil,
+    model = nil,
+    provider = nil,
+    bufnr = nil,
+    completion_timer = nil,
+  }
+end
+
+---@param inline CCExtra.InlineState
+local function _safe_close_inline_timer(inline)
+  if inline.completion_timer and not inline.completion_timer:is_closing() then
+    inline.completion_timer:stop()
+    inline.completion_timer:close()
+  end
+  inline.completion_timer = nil
+end
+
+---Reset inline state back to idle
+function StateManager:_reset_inline()
+  _safe_close_inline_timer(self.inline)
+  self.inline = StateManager._create_inline_state()
+  self:_emit("inline_updated")
+end
+
+---@param bufnr? number The code buffer being modified
+---@param adapter? table Adapter info from the event data
+function StateManager:on_inline_started(bufnr, adapter)
+  debug_log("on_inline_started called, bufnr=" .. tostring(bufnr))
+
+  -- Cancel any previous inline completion timer
+  _safe_close_inline_timer(self.inline)
+
+  self.inline.active = true
+  self.inline.status = "sending"
+  self.inline.started_at = vim.uv.now()
+  self.inline.completed_at = nil
+  self.inline.duration_ms = nil
+  self.inline.bufnr = bufnr
+
+  if adapter then
+    self.inline.adapter = adapter.formatted_name or adapter.name
+    local model = adapter.model
+    if type(model) == "table" then model = model.name or model.default or model.id or model.model end
+    self.inline.model = model
+    self.inline.provider = adapter.provider
+  end
+
+  self:_emit("inline_updated")
+end
+
+---@param status? "success"|"error"|string
+function StateManager:on_inline_finished(status)
+  debug_log("on_inline_finished called, status=" .. tostring(status))
+  if not self.inline.active then return end
+
+  local now = vim.uv.now()
+  self.inline.completed_at = now
+  if self.inline.started_at then self.inline.duration_ms = now - self.inline.started_at end
+
+  if status == "error" then
+    self.inline.status = "error"
+  else
+    self.inline.status = "completed"
+  end
+
+  -- Start completion timer to transition back to idle
+  local display_time = (self.config.display and self.config.display.completion_display_time) or COMPLETION_DISPLAY_TIME
+  local timer = vim.uv.new_timer()
+  self.inline.completion_timer = timer
+  timer:start(
+    display_time,
+    0,
+    vim.schedule_wrap(function()
+      debug_log("inline completion timer fired")
+      self:_reset_inline()
+    end)
+  )
+
+  self:_emit("inline_updated")
+end
+
+-- ============================================================================
+-- Chat Buffer Events
+-- ============================================================================
+
 ---@param bufnr number
 function StateManager:on_chat_opened(bufnr)
   self:get_parent(bufnr, true)
@@ -343,6 +566,22 @@ end
 function StateManager:on_chat_closed(bufnr)
   self:remove_parent(bufnr)
 end
+
+---@param bufnr number
+---@param adapter table
+function StateManager:on_chat_adapter(bufnr, adapter)
+  self:set_adapter(bufnr, adapter)
+end
+
+---@param bufnr number
+---@param adapter table
+function StateManager:on_chat_model(bufnr, adapter)
+  self:set_adapter(bufnr, adapter)
+end
+
+-- ============================================================================
+-- Timer Management
+-- ============================================================================
 
 ---Cancel completion timer for a parent
 ---@param bufnr number
@@ -417,17 +656,9 @@ function StateManager:schedule_subagent_cleanup(parent_bufnr, child_bufnr)
   parent.subagent_cleanup_timers[child_bufnr] = timer
 end
 
----@param bufnr number
----@param adapter table
-function StateManager:on_chat_adapter(bufnr, adapter)
-  self:set_adapter(bufnr, adapter)
-end
-
----@param bufnr number
----@param adapter table
-function StateManager:on_chat_model(bufnr, adapter)
-  self:set_adapter(bufnr, adapter)
-end
+-- ============================================================================
+-- View (safe snapshot for UI consumers)
+-- ============================================================================
 
 ---Snapshot without userdata for UI consumers
 ---@return CCExtra.StateView
@@ -440,6 +671,17 @@ function StateManager:get_view()
   local view = {
     parents = {},
     active_parent_bufnr = self.active_parent_bufnr,
+    inline = {
+      active = self.inline.active,
+      status = self.inline.status,
+      started_at = self.inline.started_at,
+      completed_at = self.inline.completed_at,
+      duration_ms = self.inline.duration_ms,
+      adapter = self.inline.adapter,
+      model = self.inline.model,
+      provider = self.inline.provider,
+      bufnr = self.inline.bufnr,
+    },
   }
 
   for bufnr, parent in pairs(self.parents) do
@@ -449,6 +691,7 @@ function StateManager:get_view()
       request_started = parent.request_started,
       total_started = parent.total_started,
       duration_ms = parent.duration_ms,
+      completed_at = parent.completed_at,
       adapter = parent.adapter,
       model = parent.model,
       provider = parent.provider,
@@ -483,12 +726,17 @@ function StateManager:get_parent_view()
   local filtered = {
     parents = {},
     active_parent_bufnr = view.active_parent_bufnr,
+    inline = view.inline,
   }
   for bufnr, parent in pairs(view.parents) do
     if not parent.is_child then filtered.parents[bufnr] = parent end
   end
   return filtered
 end
+
+-- ============================================================================
+-- Module (singleton)
+-- ============================================================================
 
 local M = {}
 local _instance = nil
