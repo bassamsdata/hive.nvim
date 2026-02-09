@@ -99,9 +99,7 @@ function AskUserForm:_create_window(config)
   })
 
   if config.winhighlight then api.nvim_set_option_value("winhighlight", config.winhighlight, { win = winnr }) end
-
   api.nvim_set_option_value("wrap", true, { win = winnr })
-
   api.nvim_set_option_value("cursorline", false, { win = winnr })
 
   return { bufnr = bufnr, winnr = winnr }
@@ -643,11 +641,13 @@ function AskUserForm:show()
 
   self.height = questions_height
 
-  local total_height = context_height > 0 and (context_height + questions_height) or questions_height
-  local start_row = math.floor((vim.o.lines - total_height) / 2)
+  local statusline_height = vim.o.laststatus > 0 and 1 or 0
+  local tabline_height = vim.o.showtabline > 0 and 1 or 0
+  local available_height = vim.o.lines - (vim.o.cmdheight + statusline_height + tabline_height)
+  local total_height = (context_height > 0 and context_height or 0) + questions_height
+  local start_row = tabline_height + math.floor((available_height - total_height) / 2) - 1
   local col = math.floor((vim.o.columns - self.width) / 2)
 
-  -- Create context window first (if we have context)
   if self.context and context_height > 0 then
     local ctx = self:_create_window({
       name = "CodeCompanion_Context",

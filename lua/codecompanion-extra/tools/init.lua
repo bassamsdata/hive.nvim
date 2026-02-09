@@ -28,6 +28,9 @@ M.tools = {
     local todo = require("codecompanion-extra.tools.todo")
     return todo.get_todoread()
   end,
+  consult = function()
+    return (require("codecompanion-extra.tools.consult"))
+  end,
 }
 
 ---Get a tool definition

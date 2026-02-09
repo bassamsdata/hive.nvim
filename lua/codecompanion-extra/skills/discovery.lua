@@ -4,6 +4,7 @@
 local M = {}
 
 local uv = vim.uv
+local fs = vim.fs
 local parser = require("codecompanion-extra.skills.parser")
 
 ---@class SkillDiscoveryOpts
@@ -12,7 +13,7 @@ local parser = require("codecompanion-extra.skills.parser")
 ---Check if path is a directory
 ---@param path string
 ---@return boolean
-local function is_dir(path)
+local function _is_dir(path)
   local stat = uv.fs_stat(path)
   return stat and stat.type == "directory" or false
 end
@@ -20,7 +21,7 @@ end
 ---Check if file exists
 ---@param path string
 ---@return boolean
-local function file_exists(path)
+local function _file_exists(path)
   local stat = uv.fs_stat(path)
   return stat and stat.type == "file" or false
 end
@@ -29,13 +30,13 @@ end
 ---@param dir string Directory to scan
 ---@param opts? SkillDiscoveryOpts
 ---@return SkillMeta[]
-local function scan_directory(dir, opts)
+local function _scan_directory(dir, opts)
   opts = opts or {}
   local skills = {}
 
-  dir = vim.fs.normalize(dir)
+  dir = fs.normalize(dir)
 
-  if not is_dir(dir) then return skills end
+  if not _is_dir(dir) then return skills end
 
   local handle = uv.fs_scandir(dir)
   if not handle then return skills end
@@ -45,10 +46,10 @@ local function scan_directory(dir, opts)
     if not name then break end
 
     if ftype == "directory" then
-      local subdir = vim.fs.joinpath(dir, name)
-      local skill_md = vim.fs.joinpath(subdir, "SKILL.md")
+      local subdir = fs.joinpath(dir, name)
+      local skill_md = fs.joinpath(subdir, "SKILL.md")
 
-      local md_exists = file_exists(skill_md)
+      local md_exists = _file_exists(skill_md)
 
       if md_exists then
         local meta = parser.parse_meta(skill_md)
@@ -59,7 +60,7 @@ local function scan_directory(dir, opts)
       end
 
       if opts.recursive then
-        local nested = scan_directory(subdir, opts)
+        local nested = _scan_directory(subdir, opts)
         for _, skill in ipairs(nested) do
           table.insert(skills, skill)
         end
@@ -73,15 +74,8 @@ end
 ---Find git root from a starting directory
 ---@param start_dir string
 ---@return string|nil
-local function find_git_root(start_dir)
-  local dir = vim.fs.normalize(start_dir)
-
-  while dir and dir ~= "/" do
-    if is_dir(vim.fs.joinpath(dir, ".git")) then return dir end
-    dir = vim.fn.fnamemodify(dir, ":h")
-  end
-
-  return nil
+local function _find_git_root(start_dir)
+  return fs.root(start_dir, ".git")
 end
 
 ---Get default skill directories to scan
@@ -92,14 +86,14 @@ function M.default_directories()
   local home = vim.fn.expand("~")
 
   -- Project-level directories
-  table.insert(dirs, vim.fs.joinpath(cwd, ".codecompanion", "skills"))
-  table.insert(dirs, vim.fs.joinpath(cwd, ".claude", "skills"))
-  table.insert(dirs, vim.fs.joinpath(cwd, ".opencode", "skills"))
+  table.insert(dirs, fs.joinpath(cwd, ".codecompanion", "skills"))
+  table.insert(dirs, fs.joinpath(cwd, ".claude", "skills"))
+  table.insert(dirs, fs.joinpath(cwd, ".opencode", "skills"))
 
   -- User-level directories
-  table.insert(dirs, vim.fs.joinpath(home, ".config", "codecompanion", "skills"))
-  table.insert(dirs, vim.fs.joinpath(home, ".config", "opencode", "skills"))
-  table.insert(dirs, vim.fs.joinpath(home, ".claude", "skills"))
+  table.insert(dirs, fs.joinpath(home, ".config", "codecompanion", "skills"))
+  table.insert(dirs, fs.joinpath(home, ".config", "opencode", "skills"))
+  table.insert(dirs, fs.joinpath(home, ".claude", "skills"))
 
   return dirs
 end
@@ -113,7 +107,7 @@ function M.discover(directories, opts)
   local skills = {}
 
   for _, dir in ipairs(directories) do
-    local found = scan_directory(dir, opts)
+    local found = _scan_directory(dir, opts)
     for _, skill in ipairs(found) do
       if skills[skill.name] then
       else
@@ -139,21 +133,21 @@ function M.discover_to_git_root(opts)
   opts = opts or {}
   local skills = {}
   local cwd = vim.fn.getcwd()
-  local git_root = find_git_root(cwd)
+  local git_root = _find_git_root(cwd)
 
   if not git_root then return M.discover_default(opts) end
 
   local dir = cwd
   while dir and #dir >= #git_root do
     local skill_dirs = {
-      vim.fs.joinpath(dir, ".codecompanion", "skills"),
-      vim.fs.joinpath(dir, ".claude", "skills"),
-      vim.fs.joinpath(dir, ".opencode", "skills"),
+      fs.joinpath(dir, ".codecompanion", "skills"),
+      fs.joinpath(dir, ".claude", "skills"),
+      fs.joinpath(dir, ".opencode", "skills"),
     }
 
     for _, skill_dir in ipairs(skill_dirs) do
-      if is_dir(skill_dir) then
-        local found = scan_directory(skill_dir, opts)
+      if _is_dir(skill_dir) then
+        local found = _scan_directory(skill_dir, opts)
         for _, skill in ipairs(found) do
           if not skills[skill.name] then skills[skill.name] = skill end
         end
@@ -166,14 +160,14 @@ function M.discover_to_git_root(opts)
 
   local home = vim.fn.expand("~")
   local user_dirs = {
-    vim.fs.joinpath(home, ".config", "codecompanion", "skills"),
-    vim.fs.joinpath(home, ".claude", "skills"),
-    vim.fs.joinpath(home, ".config", "opencode", "skills"),
+    fs.joinpath(home, ".config", "codecompanion", "skills"),
+    fs.joinpath(home, ".claude", "skills"),
+    fs.joinpath(home, ".config", "opencode", "skills"),
   }
 
   for _, user_dir in ipairs(user_dirs) do
-    if is_dir(user_dir) then
-      local found = scan_directory(user_dir, opts)
+    if _is_dir(user_dir) then
+      local found = _scan_directory(user_dir, opts)
       for _, skill in ipairs(found) do
         if not skills[skill.name] then skills[skill.name] = skill end
       end

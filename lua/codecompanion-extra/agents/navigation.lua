@@ -174,7 +174,7 @@ function M.setup()
   }
 
   keymaps["parent_agent"] = {
-    modes = { n = "[p" },
+    modes = { n = "]p" },
     index = 62,
     callback = function(chat)
       M.keymaps.parent_agent(chat)
@@ -183,7 +183,7 @@ function M.setup()
   }
 
   keymaps["list_subagents"] = {
-    modes = { n = "gs" },
+    modes = { n = "]S" },
     index = 63,
     callback = function(chat)
       M.keymaps.list_subagents(chat)
