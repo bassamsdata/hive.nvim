@@ -100,6 +100,9 @@ function M._setup_chat_events()
           end
         end
 
+        local ok, todo = pcall(require, "codecompanion-extra.tools.todo")
+        if ok then todo.clear_todos(bufnr) end
+
         M._chat_agents[bufnr] = nil
         hierarchy.remove(bufnr)
       end
@@ -205,6 +208,16 @@ function M._register_extra_tools()
     callback = todoread,
     description = todoread.schema and todoread.schema["function"] and todoread.schema["function"].description
       or "Read current task list",
+    opts = {},
+  }
+
+  local consult_tool = require("codecompanion-extra.tools.consult")
+  chat_tools["consult"] = {
+    callback = consult_tool,
+    description = consult_tool.schema
+        and consult_tool.schema["function"]
+        and consult_tool.schema["function"].description
+      or "Consult specialist advisors for expert guidance",
     opts = {},
   }
 end
