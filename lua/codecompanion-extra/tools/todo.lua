@@ -1,8 +1,21 @@
+-- Todo tools for task tracking during complex operations
+-- Only the build agent has write access, subagents can only read
+--
+-- The todo system allows agents to:
+-- Track multi-step tasks with status (pending, in_progress, completed, cancelled)
+-- Prioritize work (high, medium, low)
+-- Maintain visibility into workflow progress
+
 local log = require("codecompanion.utils.log")
 
 local api = vim.api
 local fmt = string.format
--- stylua: ignore start 
+
+-- ============================================================================
+-- Constants
+-- ============================================================================
+
+-- stylua: ignore start
 local ICONS = {
   pending         = "",
   in_progress     = "",
@@ -29,6 +42,10 @@ local HIGHLIGHTS = {
 }
 -- stylua: ignore end
 
+-- ============================================================================
+-- Storage
+-- ============================================================================
+
 ---@class CodeCompanionExtra.TodoItem
 ---@field id string Unique identifier for the todo
 ---@field content string Brief description of the task (5-7 words)
@@ -40,6 +57,11 @@ local _todo_store = {}
 
 ---@type number
 local _id_counter = 0
+
+-- ============================================================================
+-- Helper Functions
+-- ============================================================================
+
 ---Generate a unique todo ID
 ---@return string
 local function generate_id()
@@ -73,7 +95,6 @@ local function can_write_todos(chat)
   local active_agent = agents.active(chat.bufnr)
   if not active_agent then return true end
 
-  -- TODO:make it configurable but for now, I'm gonna leave it like this
   return active_agent == "build"
 end
 
@@ -158,21 +179,27 @@ local function build_user_output_read(todos)
   table.insert(lines, fmt("  %s Progress: %s", ICONS.progress, table.concat(progress_parts, " │ ")))
   table.insert(lines, "")
 
-  -- Current task (in_progress)
+  -- Show ALL tasks individually, grouped by status
   for _, todo in ipairs(todos) do
     if todo.status == "in_progress" then
       local priority_icon = get_priority_icon(todo.priority)
-      table.insert(lines, fmt("  ▶ NOW: %s %s", priority_icon, todo.content))
-      break
+      table.insert(lines, fmt("  %s %s %s", ICONS.in_progress, priority_icon, todo.content))
     end
   end
 
-  local pending = {}
   for _, todo in ipairs(todos) do
-    if todo.status == "pending" then table.insert(pending, todo) end
+    if todo.status == "pending" then
+      local priority_icon = get_priority_icon(todo.priority)
+      table.insert(lines, fmt("  %s %s %s", ICONS.pending, priority_icon, todo.content))
+    end
   end
-  if #pending > 0 then
-    table.insert(lines, fmt("  ○ Next: %d task%s queued", #pending, #pending == 1 and "" or "s"))
+
+  for _, todo in ipairs(todos) do
+    if todo.status == "completed" then table.insert(lines, fmt("  %s %s", ICONS.completed, todo.content)) end
+  end
+
+  for _, todo in ipairs(todos) do
+    if todo.status == "cancelled" then table.insert(lines, fmt("  %s %s", ICONS.cancelled, todo.content)) end
   end
 
   table.insert(lines, "─────────────────────────────")
@@ -196,42 +223,27 @@ local function build_user_output_write(todos, action)
     fmt("════════════ %s %s ═════════════", ICONS.todo, header_text)
   )
 
-  local in_progress = {}
-  local pending = {}
-  local completed = {}
-
+  -- Show ALL tasks individually, grouped by status
   for _, todo in ipairs(todos) do
     if todo.status == "in_progress" then
-      table.insert(in_progress, todo)
-    elseif todo.status == "pending" then
-      table.insert(pending, todo)
-    elseif todo.status == "completed" then
-      table.insert(completed, todo)
-    end
-  end
-
-  if #in_progress > 0 then
-    for _, todo in ipairs(in_progress) do
       local priority_icon = get_priority_icon(todo.priority)
-      table.insert(lines, fmt("  %s %s %s", ICONS.in_progress, priority_icon, todo.content))
+      table.insert(lines, fmt("  %s **%s** %s", ICONS.in_progress, priority_icon, todo.content))
     end
   end
 
-  if #pending > 0 then
-    for _, todo in ipairs(pending) do
+  for _, todo in ipairs(todos) do
+    if todo.status == "pending" then
       local priority_icon = get_priority_icon(todo.priority)
-      table.insert(lines, fmt("  %s %s %s", ICONS.pending, priority_icon, todo.content))
+      table.insert(lines, fmt("  %s **%s** %s", ICONS.pending, priority_icon, todo.content))
     end
   end
 
-  if #completed > 0 then
-    if #completed <= 2 then
-      for _, todo in ipairs(completed) do
-        table.insert(lines, fmt("  %s %s", ICONS.completed, todo.content))
-      end
-    else
-      table.insert(lines, fmt("  %s %d tasks completed", ICONS.completed, #completed))
-    end
+  for _, todo in ipairs(todos) do
+    if todo.status == "completed" then table.insert(lines, fmt("  %s %s", ICONS.completed, todo.content)) end
+  end
+
+  for _, todo in ipairs(todos) do
+    if todo.status == "cancelled" then table.insert(lines, fmt("  %s %s", ICONS.cancelled, todo.content)) end
   end
 
   table.insert(lines, "")
@@ -244,7 +256,7 @@ local function build_user_output_write(todos, action)
 
   table.insert(
     lines,
-    "═══════════════════════════════════"
+    "═════════════════════════════════════════════════"
   )
 
   return table.concat(lines, "\n")
@@ -286,6 +298,11 @@ local function validate_todos(todos)
 
   return true, nil
 end
+
+-- ============================================================================
+-- TodoWrite Tool
+-- ============================================================================
+
 ---@class CodeCompanion.Tool.TodoWrite: CodeCompanion.Tools.Tool
 local todowrite = {
   name = "todowrite",
@@ -463,7 +480,6 @@ Example workflow:
       local is_new = result.is_new
       local action = is_new and "created" or "updated"
 
-      -- LLM sees structured output
       local llm_output = fmt(
         [[<todoUpdate action="%s" count="%d">
 %s
@@ -476,7 +492,6 @@ Task list %s. Continue with your work.]],
         action
       )
 
-      -- User sees formatted output
       local user_output = build_user_output_write(todos, action)
 
       chat:add_tool_output(self, llm_output, user_output)
@@ -503,6 +518,10 @@ Task list %s. Continue with your work.]],
     end,
   },
 }
+
+-- ============================================================================
+-- TodoRead Tool
+-- ============================================================================
 
 ---@class CodeCompanion.Tool.TodoRead: CodeCompanion.Tools.Tool
 local todoread = {
@@ -593,7 +612,6 @@ Use this to:
 
       local todos = result.todos
 
-      -- LLM sees structured output
       local llm_output = fmt(
         [[<todoList count="%d">
 %s
@@ -604,7 +622,6 @@ Review the task list above and continue with your work.]],
         format_todos_for_llm(todos)
       )
 
-      -- User sees formatted output
       local user_output = build_user_output_read(todos)
 
       chat:add_tool_output(self, llm_output, user_output)
@@ -631,6 +648,208 @@ Review the task list above and continue with your work.]],
     end,
   },
 }
+
+-- ============================================================================
+-- Todo Viewer Window
+-- ============================================================================
+
+---@class TodoViewer
+---@field bufnr number|nil
+---@field winnr number|nil
+---@field ns_id number
+---@field chat_bufnr number
+local TodoViewer = {}
+TodoViewer.__index = TodoViewer
+
+---@type TodoViewer|nil
+local _active_viewer = nil
+
+---Create a new TodoViewer
+---@param chat_bufnr number
+---@return TodoViewer
+function TodoViewer.new(chat_bufnr)
+  local self = setmetatable({}, TodoViewer)
+  self.chat_bufnr = chat_bufnr
+  self.ns_id = api.nvim_create_namespace("codecompanion_todo_viewer")
+  return self
+end
+
+---Calculate window dimensions and position
+---@return { width: number, height: number, row: number, col: number }
+function TodoViewer:_calculate_dimensions()
+  local todos = get_todos(self.chat_bufnr)
+  local width = math.min(70, math.floor(vim.o.columns * 0.6))
+  local height = math.max(math.min(5 + #todos, math.floor(vim.o.lines * 0.6)), 8)
+
+  local status = vim.o.laststatus > 0 and 1 or 0
+  local cmd = vim.o.cmdheight
+  local tab = vim.o.showtabline > 0 and 1 or 0
+
+  local avail = vim.o.lines - status - cmd - tab
+  local row = math.max(tab, tab + math.floor((avail - height) / 2) - 1)
+  local col = math.floor((vim.o.columns - width) / 2)
+
+  return { width = width, height = height, row = row, col = col }
+end
+
+---Build content lines for the viewer
+---@return string[] lines
+---@return table[] highlights
+function TodoViewer:_build_content()
+  local todos = get_todos(self.chat_bufnr)
+  local lines = {}
+  local highlights = {}
+
+  api.nvim_set_hl(0, "CodeCompanionTodoHigh", { link = HIGHLIGHTS.high, bold = true })
+  api.nvim_set_hl(0, "CodeCompanionTodoMedium", { link = HIGHLIGHTS.medium, bold = true })
+  api.nvim_set_hl(0, "CodeCompanionTodoLow", { link = HIGHLIGHTS.low, bold = true })
+
+  local dim = self:_calculate_dimensions()
+  local inner_width = dim.width - 3
+
+  -- Helper to add a line with optional highlight
+  local function add_line(text, hl_group)
+    table.insert(lines, text)
+    if hl_group then table.insert(highlights, { #lines - 1, 0, -1, hl_group }) end
+  end
+
+  ---Helper to add a todo line with priority highlight
+  ---@param todo CodeCompanionExtra.TodoItem
+  ---@param icon string
+  ---@param hl string
+  local function add_todo_line(todo, icon, hl)
+    local priority_icon = get_priority_icon(todo.priority)
+    local line = fmt("  %s %s %s", icon, priority_icon, todo.content)
+    if #line > inner_width then line = line:sub(1, inner_width - 1) .. "…" end
+    add_line(line, hl)
+
+    local priority_hl = "CodeCompanionTodo" .. todo.priority:gsub("^%l", string.upper)
+    local pos = line:find(priority_icon, 1, true)
+    if pos then table.insert(highlights, { #lines - 1, pos - 1, pos - 1 + #priority_icon, priority_hl }) end
+  end
+
+  -- Header
+  add_line("", nil)
+  local counts = count_todos(todos)
+  local progress_text = fmt("  %s %d/%d completed", ICONS.progress, counts.completed, counts.total)
+  add_line(progress_text, HIGHLIGHTS.header)
+  add_line("", nil)
+
+  if #todos == 0 then
+    add_line("  No tasks yet", HIGHLIGHTS.pending)
+    add_line("", nil)
+    add_line("  The agent will create tasks", HIGHLIGHTS.pending)
+    add_line("  when working on complex operations.", HIGHLIGHTS.pending)
+  else
+    -- Show ALL tasks individually, grouped by status
+    for _, todo in ipairs(todos) do
+      if todo.status == "in_progress" then add_todo_line(todo, ICONS.in_progress, HIGHLIGHTS.in_progress) end
+    end
+
+    for _, todo in ipairs(todos) do
+      if todo.status == "pending" then add_todo_line(todo, ICONS.pending, HIGHLIGHTS.pending) end
+    end
+
+    if counts.completed > 0 or counts.cancelled > 0 then add_line("", nil) end
+
+    for _, todo in ipairs(todos) do
+      if todo.status == "completed" then add_todo_line(todo, ICONS.completed, HIGHLIGHTS.completed) end
+    end
+
+    for _, todo in ipairs(todos) do
+      if todo.status == "cancelled" then add_todo_line(todo, ICONS.cancelled, HIGHLIGHTS.cancelled) end
+    end
+  end
+
+  add_line("", nil)
+
+  return lines, highlights
+end
+
+---Show the todo viewer window
+function TodoViewer:show()
+  if _active_viewer then _active_viewer:close() end
+
+  local dim = self:_calculate_dimensions()
+
+  self.bufnr = api.nvim_create_buf(false, true)
+  api.nvim_set_option_value("buftype", "nofile", { buf = self.bufnr })
+  api.nvim_set_option_value("bufhidden", "wipe", { buf = self.bufnr })
+  api.nvim_set_option_value("swapfile", false, { buf = self.bufnr })
+  api.nvim_buf_set_name(self.bufnr, "CodeCompanion_Todos")
+  vim.b[self.bufnr].miniindentscope_disable = true
+
+  self.winnr = api.nvim_open_win(self.bufnr, true, {
+    relative = "editor",
+    width = dim.width,
+    height = dim.height,
+    row = dim.row,
+    col = dim.col,
+    style = "minimal",
+    border = "rounded",
+    title = fmt(" %s Task List ", ICONS.todo),
+    title_pos = "center",
+    footer = " q:close ",
+    footer_pos = "center",
+  })
+
+  api.nvim_set_option_value("wrap", true, { win = self.winnr })
+  api.nvim_set_option_value("cursorline", false, { win = self.winnr })
+
+  _active_viewer = self
+
+  self:render()
+
+  local close_keys = { "q", "<Esc>", "<CR>" }
+  for _, key in ipairs(close_keys) do
+    vim.keymap.set("n", key, function()
+      self:close()
+    end, { buffer = self.bufnr, nowait = true })
+  end
+
+  api.nvim_create_autocmd("WinLeave", {
+    buffer = self.bufnr,
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        self:close()
+      end)
+    end,
+  })
+end
+
+---Render content into the buffer
+function TodoViewer:render()
+  if not self.bufnr or not api.nvim_buf_is_valid(self.bufnr) then return end
+
+  local lines, highlights = self:_build_content()
+
+  api.nvim_set_option_value("modifiable", true, { buf = self.bufnr })
+  api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
+  api.nvim_set_option_value("modifiable", false, { buf = self.bufnr })
+
+  api.nvim_buf_clear_namespace(self.bufnr, self.ns_id, 0, -1)
+  for _, hl in ipairs(highlights) do
+    local line, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
+    if col_end == -1 then col_end = #lines[line + 1] end
+    pcall(api.nvim_buf_set_extmark, self.bufnr, self.ns_id, line, col_start, {
+      end_col = col_end,
+      hl_group = hl_group,
+    })
+  end
+end
+
+---Close the viewer
+function TodoViewer:close()
+  if self.winnr and api.nvim_win_is_valid(self.winnr) then api.nvim_win_close(self.winnr, true) end
+  self.winnr = nil
+  self.bufnr = nil
+  if _active_viewer == self then _active_viewer = nil end
+end
+
+-- ============================================================================
+-- Module Exports
+-- ============================================================================
 
 local M = {}
 
@@ -663,6 +882,39 @@ end
 function M.clear_all()
   _todo_store = {}
   _id_counter = 0
+end
+
+---Show todo viewer for a chat buffer
+---@param chat_bufnr number
+function M.show_viewer(chat_bufnr)
+  local viewer = TodoViewer.new(chat_bufnr)
+  viewer:show()
+end
+
+---Close active viewer if any
+function M.close_viewer()
+  if _active_viewer then _active_viewer:close() end
+end
+
+---Setup keymap for todo viewer
+---@param keymap? string Default "gT"
+function M.setup_keymap(keymap)
+  keymap = keymap or "gT"
+
+  local ok, cc_config = pcall(require, "codecompanion.config")
+  if not ok then return end
+
+  local chat_keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
+  if not chat_keymaps then return end
+
+  chat_keymaps["todo_viewer"] = {
+    modes = { n = keymap },
+    index = 51,
+    description = "[Todo] View task list",
+    callback = function(chat)
+      if chat and chat.bufnr then M.show_viewer(chat.bufnr) end
+    end,
+  }
 end
 
 return M
