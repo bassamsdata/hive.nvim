@@ -147,8 +147,7 @@ end
 ---@return number aug_id The autocommand group ID for cleanup
 function M.setup_listeners(args)
   local aug = api.nvim_create_augroup(args.group_name, { clear = true })
-  local bufnr = args.child_bufnr
-  local cb = args.callbacks
+  local bufnr, cb = args.child_bufnr, args.callbacks
 
   if cb.on_tool_started or cb.on_tool_finished then
     api.nvim_create_autocmd("User", {
@@ -158,53 +157,33 @@ function M.setup_listeners(args)
         if not event.data or event.data.bufnr ~= bufnr then return end
 
         if event.match == "CodeCompanionToolStarted" and cb.on_tool_started then
-          local tool_name = event.data.tool or "unknown"
-          cb.on_tool_started(event, tool_name)
+          cb.on_tool_started(event, event.data.tool or "unknown")
         elseif event.match == "CodeCompanionToolFinished" and cb.on_tool_finished then
-          local tool_name = event.data.name or "unknown"
-          cb.on_tool_finished(event, tool_name)
+          cb.on_tool_finished(event, event.data.name or "unknown")
         end
       end,
     })
   end
 
-  if cb.on_done then
-    api.nvim_create_autocmd("User", {
-      group = aug,
-      pattern = "CodeCompanionChatDone",
-      callback = function(event)
-        if event.data and event.data.bufnr == bufnr then
-          cb.on_done(event)
-          return true
-        end
-      end,
-    })
-  end
+  local chat_events = {
+    CodeCompanionChatDone = "on_done",
+    CodeCompanionChatStopped = "on_stopped",
+    CodeCompanionChatClosed = "on_closed",
+  }
 
-  if cb.on_stopped then
-    api.nvim_create_autocmd("User", {
-      group = aug,
-      pattern = "CodeCompanionChatStopped",
-      callback = function(event)
-        if event.data and event.data.bufnr == bufnr then
-          cb.on_stopped(event)
-          return true
-        end
-      end,
-    })
-  end
-
-  if cb.on_closed then
-    api.nvim_create_autocmd("User", {
-      group = aug,
-      pattern = "CodeCompanionChatClosed",
-      callback = function(event)
-        if event.data and event.data.bufnr == bufnr then
-          cb.on_closed(event)
-          return true
-        end
-      end,
-    })
+  for pattern, key in pairs(chat_events) do
+    if cb[key] then
+      api.nvim_create_autocmd("User", {
+        group = aug,
+        pattern = pattern,
+        callback = function(event)
+          if event.data and event.data.bufnr == bufnr then
+            cb[key](event)
+            return true
+          end
+        end,
+      })
+    end
   end
 
   return aug
