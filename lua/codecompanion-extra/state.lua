@@ -81,7 +81,6 @@ local M = {}
 ---@field inline CCExtra.InlineState
 ---@field active_parent_bufnr number|nil
 ---@field callbacks table<string, function[]>
----@field completion_timers table<number, userdata>
 local StateManager = {}
 StateManager.__index = StateManager
 
@@ -100,7 +99,6 @@ function StateManager.new(config)
   self.inline = StateManager._create_inline_state()
   self.active_parent_bufnr = nil
   self.callbacks = {}
-  self.completion_timers = {}
   return self
 end
 
@@ -249,21 +247,11 @@ function StateManager:on_chat_submitted(bufnr)
   local parent = self:get_parent(bufnr, true)
   if not parent then return end
 
-  M.debug_log(
-    string.format(
-      "on_chat_submitted: bufnr=%d | completion_timers[bufnr]=%s",
-      bufnr,
-      self.completion_timers[bufnr] and "exists" or "nil"
-    )
-  )
-
-  self:cancel_completion_timer(bufnr)
-  if self.completion_timers[bufnr] then
-    M.debug_log(string.format("  cancelling completion_timers[bufnr] -> new cycle, clearing timing"))
-    self.completion_timers[bufnr]:stop()
-    self.completion_timers[bufnr]:close()
-    self.completion_timers[bufnr] = nil
-    -- Timer still pending = user resubmitted before 3s display ended = new cycle
+  -- NOTE: Cancel any pending completion timer from a previous cycle.
+  -- If a timer was running, the previous cycle was finalized (ChatDone fired)
+  -- but the idle transition hasn't happened yet = fast resubmit = new cycle.
+  local cancelled_timer = self:cancel_completion_timer(bufnr)
+  if cancelled_timer then
     parent.total_started = nil
     parent.duration_ms = nil
     parent.completed_at = nil
@@ -271,17 +259,20 @@ function StateManager:on_chat_submitted(bufnr)
 
   M.debug_log(
     string.format(
-      "  BEFORE: total_started=%s | duration_ms=%s | completed_at=%s",
+      "on_chat_submitted: bufnr=%d | cancelled_timer=%s | BEFORE: total_started=%s | duration_ms=%s | completed_at=%s",
+      bufnr,
+      cancelled_timer and "yes" or "no",
       parent.total_started or "nil",
       parent.duration_ms or "nil",
       parent.completed_at or "nil"
     )
   )
 
-  -- Guard: don't reset total_started during multi-round tool cycles
-  -- (ChatSubmitted fires for each round via tools_done -> submit)
+  -- NOTE: This is guard: don't reset total_started during multi-round tool cycles.
+  -- Between ChatSubmitted and ChatDone, completed_at is nil (only set by _finalize_chat_duration).
+  -- So total_started set + completed_at nil = mid-cycle continuation.
   if parent.total_started and not parent.completed_at then
-    M.debug_log(string.format("  early return: total_started exists and no completed_at"))
+    M.debug_log(string.format("  early return: mid-cycle continuation"))
     return
   end
 
@@ -313,11 +304,9 @@ function StateManager:_finalize_chat_duration(bufnr, final_status)
     parent.duration_ms = parent.completed_at - parent.request_started
   end
 
-  if parent.status ~= "error" and parent.status ~= "cancelled" and parent.status ~= "completed" then
-    parent.status = final_status
-    self:schedule_completion(bufnr)
-  end
-
+  parent.status = final_status
+  self:_emit("request_completed", bufnr, parent)
+  self:schedule_completion(bufnr)
   self:_emit("parent_updated", bufnr, parent)
 end
 
@@ -362,64 +351,10 @@ function StateManager:on_request_finished(bufnr, status)
     M.debug_log("  set status to: " .. final_status)
   end
 
-  if parent.status == "completed" or parent.status == "error" or parent.status == "cancelled" then
-    self:_emit("request_completed", bufnr, parent)
-    self:_start_completion_timer(bufnr)
-  end
+  -- NOTE: The idle transition is only triggered
+  -- by ChatDone/ChatStopped via _finalize_chat_duration -> schedule_completion.
+  -- This prevents premature idle when tools start after a gap.
   self:_emit("parent_updated", bufnr, parent)
-end
-
----Start a timer to transition parent from completed/error/cancelled to idle
----@param bufnr number
-function StateManager:_start_completion_timer(bufnr)
-  if self.completion_timers[bufnr] then
-    M.debug_log(string.format("_start_completion_timer: bufnr=%d | existing timer found, stopping", bufnr))
-    self.completion_timers[bufnr]:stop()
-    self.completion_timers[bufnr]:close()
-  end
-
-  local timer = vim.uv.new_timer()
-  self.completion_timers[bufnr] = timer
-  M.debug_log(
-    string.format("_start_completion_timer: bufnr=%d | created new timer (delay=%dms)", bufnr, COMPLETION_DISPLAY_TIME)
-  )
-
-  timer:start(
-    COMPLETION_DISPLAY_TIME,
-    0,
-    vim.schedule_wrap(function()
-      M.debug_log(string.format("completion_timer_fired: bufnr=%d", bufnr))
-      local parent = self:get_parent(bufnr, true)
-      if parent and (parent.status == "completed" or parent.status == "error" or parent.status == "cancelled") then
-        M.debug_log(string.format("  transitioning bufnr=%d from %s to idle", bufnr, parent.status))
-        parent.status = "idle"
-        parent.request_id = nil
-        parent.request_finished = false
-        parent.request_final_status = nil
-        -- Clear cycle-level timing so next cycle starts fresh
-        parent.total_started = nil
-        parent.duration_ms = nil
-        parent.completed_at = nil
-        self:_emit("parent_updated", bufnr, parent)
-      else
-        M.debug_log(
-          string.format(
-            "  bufnr=%d skipped transition (parent exists=%s, status=%s)",
-            bufnr,
-            parent and "yes" or "no",
-            parent and parent.status or "N/A"
-          )
-        )
-      end
-
-      if self.completion_timers[bufnr] then
-        M.debug_log(string.format("  cleaning up timer for bufnr=%d", bufnr))
-        self.completion_timers[bufnr]:stop()
-        self.completion_timers[bufnr]:close()
-        self.completion_timers[bufnr] = nil
-      end
-    end)
-  )
 end
 
 ---@param bufnr number
@@ -455,9 +390,6 @@ function StateManager:on_tool_finished(bufnr, tool_name)
     end
   end
 
-  if parent.status == "completed" or parent.status == "error" or parent.status == "cancelled" then
-    self:_emit("request_completed", bufnr, parent)
-  end
   self:_emit("parent_updated", bufnr, parent)
 end
 
@@ -650,14 +582,16 @@ end
 
 ---Cancel completion timer for a parent
 ---@param bufnr number
+---@return boolean cancelled Whether a timer was actually cancelled
 function StateManager:cancel_completion_timer(bufnr)
   local parent = self.parents[bufnr]
-  if not parent or not parent.completion_timer then return end
+  if not parent or not parent.completion_timer then return false end
   if not parent.completion_timer:is_closing() then
     parent.completion_timer:stop()
     parent.completion_timer:close()
   end
   parent.completion_timer = nil
+  return true
 end
 
 ---Cancel subagent cleanup timers for a parent
