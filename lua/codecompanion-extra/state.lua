@@ -12,14 +12,15 @@
 --   4. Wire event routing in spinner.lua
 
 local DEBUG_LOG_PATH = vim.fn.stdpath("data") .. "/ccextra_debug.log"
+local M = {}
 
-local function debug_log(msg)
-  local f = io.open(DEBUG_LOG_PATH, "a")
-  if f then
-    f:write(string.format("[%s] [state] %s\n", os.date("%H:%M:%S"), msg))
-    f:close()
-  end
-end
+-- local function debug_log(msg)
+--   local f = io.open(DEBUG_LOG_PATH, "a")
+--   if f then
+--     f:write(string.format("[%s] [state] %s\n", os.date("%H:%M:%S"), msg))
+--     f:close()
+--   end
+-- end
 
 -- ============================================================================
 -- Type Definitions
@@ -247,10 +248,54 @@ end
 function StateManager:on_chat_submitted(bufnr)
   local parent = self:get_parent(bufnr, true)
   if not parent then return end
-  if parent.total_started and not parent.completed_at then return end
+
+  M.debug_log(
+    string.format(
+      "on_chat_submitted: bufnr=%d | completion_timers[bufnr]=%s",
+      bufnr,
+      self.completion_timers[bufnr] and "exists" or "nil"
+    )
+  )
+
+  self:cancel_completion_timer(bufnr)
+  if self.completion_timers[bufnr] then
+    M.debug_log(string.format("  cancelling completion_timers[bufnr] -> new cycle, clearing timing"))
+    self.completion_timers[bufnr]:stop()
+    self.completion_timers[bufnr]:close()
+    self.completion_timers[bufnr] = nil
+    -- Timer still pending = user resubmitted before 3s display ended = new cycle
+    parent.total_started = nil
+    parent.duration_ms = nil
+    parent.completed_at = nil
+  end
+
+  M.debug_log(
+    string.format(
+      "  BEFORE: total_started=%s | duration_ms=%s | completed_at=%s",
+      parent.total_started or "nil",
+      parent.duration_ms or "nil",
+      parent.completed_at or "nil"
+    )
+  )
+
+  -- Guard: don't reset total_started during multi-round tool cycles
+  -- (ChatSubmitted fires for each round via tools_done -> submit)
+  if parent.total_started and not parent.completed_at then
+    M.debug_log(string.format("  early return: total_started exists and no completed_at"))
+    return
+  end
+
   parent.total_started = vim.uv.now()
   parent.duration_ms = nil
   parent.completed_at = nil
+  M.debug_log(
+    string.format(
+      "  AFTER:  total_started=%d | duration_ms=%s | completed_at=%s",
+      parent.total_started,
+      parent.duration_ms or "nil",
+      parent.completed_at or "nil"
+    )
+  )
   self:_emit("parent_updated", bufnr, parent)
 end
 
@@ -297,7 +342,7 @@ end
 ---@param bufnr number
 ---@param status "success"|"error"|"cancelled"|string
 function StateManager:on_request_finished(bufnr, status)
-  debug_log("on_request_finished called, bufnr=" .. tostring(bufnr) .. " status=" .. tostring(status))
+  M.debug_log("on_request_finished called, bufnr=" .. tostring(bufnr) .. " status=" .. tostring(status))
   local parent = self:get_parent(bufnr, true)
   if not parent then return end
   local final_status
@@ -314,7 +359,7 @@ function StateManager:on_request_finished(bufnr, status)
 
   if not parent.current_tool and vim.tbl_isempty(parent.active_tools) then
     parent.status = final_status
-    debug_log("  set status to: " .. final_status)
+    M.debug_log("  set status to: " .. final_status)
   end
 
   if parent.status == "completed" or parent.status == "error" or parent.status == "cancelled" then
@@ -328,27 +373,47 @@ end
 ---@param bufnr number
 function StateManager:_start_completion_timer(bufnr)
   if self.completion_timers[bufnr] then
+    M.debug_log(string.format("_start_completion_timer: bufnr=%d | existing timer found, stopping", bufnr))
     self.completion_timers[bufnr]:stop()
     self.completion_timers[bufnr]:close()
   end
 
   local timer = vim.uv.new_timer()
   self.completion_timers[bufnr] = timer
+  M.debug_log(
+    string.format("_start_completion_timer: bufnr=%d | created new timer (delay=%dms)", bufnr, COMPLETION_DISPLAY_TIME)
+  )
+
   timer:start(
     COMPLETION_DISPLAY_TIME,
     0,
     vim.schedule_wrap(function()
-      debug_log("completion timer fired for bufnr=" .. tostring(bufnr))
+      M.debug_log(string.format("completion_timer_fired: bufnr=%d", bufnr))
       local parent = self:get_parent(bufnr, true)
       if parent and (parent.status == "completed" or parent.status == "error" or parent.status == "cancelled") then
+        M.debug_log(string.format("  transitioning bufnr=%d from %s to idle", bufnr, parent.status))
         parent.status = "idle"
         parent.request_id = nil
         parent.request_finished = false
         parent.request_final_status = nil
-        debug_log("  transitioned to idle")
+        -- Clear cycle-level timing so next cycle starts fresh
+        parent.total_started = nil
+        parent.duration_ms = nil
+        parent.completed_at = nil
         self:_emit("parent_updated", bufnr, parent)
+      else
+        M.debug_log(
+          string.format(
+            "  bufnr=%d skipped transition (parent exists=%s, status=%s)",
+            bufnr,
+            parent and "yes" or "no",
+            parent and parent.status or "N/A"
+          )
+        )
       end
+
       if self.completion_timers[bufnr] then
+        M.debug_log(string.format("  cleaning up timer for bufnr=%d", bufnr))
         self.completion_timers[bufnr]:stop()
         self.completion_timers[bufnr]:close()
         self.completion_timers[bufnr] = nil
@@ -490,7 +555,7 @@ end
 ---@param bufnr? number The code buffer being modified
 ---@param adapter? table Adapter info from the event data
 function StateManager:on_inline_started(bufnr, adapter)
-  debug_log("on_inline_started called, bufnr=" .. tostring(bufnr))
+  M.debug_log("on_inline_started called, bufnr=" .. tostring(bufnr))
 
   -- Cancel any previous inline completion timer
   _safe_close_inline_timer(self.inline)
@@ -515,7 +580,7 @@ end
 
 ---@param status? "success"|"error"|string
 function StateManager:on_inline_finished(status)
-  debug_log("on_inline_finished called, status=" .. tostring(status))
+  M.debug_log("on_inline_finished called, status=" .. tostring(status))
   if not self.inline.active then return end
 
   local now = vim.uv.now()
@@ -536,7 +601,7 @@ function StateManager:on_inline_finished(status)
     display_time,
     0,
     vim.schedule_wrap(function()
-      debug_log("inline completion timer fired")
+      M.debug_log("inline completion timer fired")
       self:_reset_inline()
     end)
   )
@@ -738,7 +803,6 @@ end
 -- Module (singleton)
 -- ============================================================================
 
-local M = {}
 local _instance = nil
 
 ---@param config table
@@ -750,6 +814,14 @@ end
 ---@return CCExtra.StateManager|nil
 function M.instance()
   return _instance
+end
+
+function M.debug_log(msg)
+  local f = io.open(DEBUG_LOG_PATH, "a")
+  if f then
+    f:write(string.format("[%s] [state] %s\n", os.date("%H:%M:%S"), msg))
+    f:close()
+  end
 end
 
 return M
