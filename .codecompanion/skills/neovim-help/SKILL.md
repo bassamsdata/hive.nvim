@@ -1,5 +1,5 @@
 ---
-name: neovim-help
+name: neovim-helo-docs
 description: Extracts a specific Neovim documentation/help section programmatically from the command line, given a Lua help topic like "vim.diagnostic.get" or "wrap". Use when you want utlizie neovim API and want precise Neovim API docs without dumping the full help file.
 ---
 
