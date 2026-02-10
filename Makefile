@@ -1,14 +1,23 @@
 all: test
 
-test: deps
-	@echo "Running tests..."
-	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run(vim.tbl_filter(function(x) return x:match('^tests/test_.*%%.lua') end, vim.fn.glob('tests/*', true, true)))"
+CC_BRANCH ?= main
 
-deps: deps/mini.nvim
+test: deps/mini.nvim
+	@echo "Running tests..."
+	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run(vim.tbl_filter(function(x) return x:match('^tests/test_.*%%.lua') and not x:match('test_cc_api_compat') end, vim.fn.glob('tests/*', true, true)))"
+
+test-compat: deps/mini.nvim deps/plenary.nvim
+	@rm -rf deps/codecompanion.nvim
+	git clone --filter=blob:none --branch $(CC_BRANCH) https://github.com/olimorris/codecompanion.nvim deps/codecompanion.nvim
+	@echo "Running API compatibility tests against codecompanion.nvim ($(CC_BRANCH))..."
+	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run_file('tests/test_cc_api_compat.lua')"
 
 deps/mini.nvim:
 	@mkdir -p deps
 	git clone --filter=blob:none https://github.com/echasnovski/mini.nvim $@
+
+deps/plenary.nvim:
+	git clone --filter=blob:none https://github.com/nvim-lua/plenary.nvim $@
 
 format:
 	@stylua .
@@ -18,4 +27,4 @@ testFile:
 	@echo "Running test $(FILE)..."
 	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run({\"$(FILE)\"})"
 
-.PHONY: all test deps format
+.PHONY: all test test-compat format
