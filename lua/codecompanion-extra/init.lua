@@ -31,6 +31,14 @@ function M._setup_modules()
     spinner.setup(M._config.spinner)
   end
 
+  if config.is_module_enabled("notify") then
+    local notify = require("codecompanion-extra.notify_controller")
+    notify.setup(M._config.sys_notify or {})
+    local state = require("codecompanion-extra.state")
+    if not state.instance() then state.setup(M._config) end
+    if notify.instance() then notify.instance():attach_state(state.instance()) end
+  end
+
   if config.is_module_enabled("skills") then
     local skills = require("codecompanion-extra.skills")
     skills.setup(M._config.skills)
@@ -101,19 +109,19 @@ end
 ---Get agents module
 ---@return table Agents module
 function M.agents()
-  return require("codecompanion-extra.agents")
+  return (require("codecompanion-extra.agents"))
 end
 
 ---Get spinner module
 ---@return table Spinner module
 function M.spinner()
-  return require("codecompanion-extra.spinner")
+  return (require("codecompanion-extra.spinner"))
 end
 
 ---Get skills module
 ---@return table Skills module
 function M.skills()
-  return require("codecompanion-extra.skills")
+  return (require("codecompanion-extra.skills"))
 end
 
 ---Check if initialized
