@@ -1,0 +1,54 @@
+name: API Compatibility Check
+
+on:
+  schedule:
+    - cron: '0 8 */3 * *'
+  workflow_dispatch: ~
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc_branch: main
+            name: codecompanion main
+          - cc_branch: develop
+            name: codecompanion develop
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 📋
+        uses: actions/checkout@v4
+
+      - name: Cache Neovim
+        id: cache-neovim
+        uses: actions/cache@v4
+        with:
+          path: _neovim
+          key: neovim-${{ runner.os }}-nightly
+
+      - name: Install Neovim
+        if: steps.cache-neovim.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p _neovim
+          curl -sL https://github.com/neovim/neovim/releases/download/nightly/nvim-linux-x86_64.tar.gz | tar xzf - --strip-components=1 -C "${PWD}/_neovim"
+
+      - name: Setup PATH
+        run: echo "${PWD}/_neovim/bin" >> $GITHUB_PATH
+
+      - name: Clone deps
+        run: |
+          make deps/mini.nvim
+          git clone --filter=blob:none --branch ${{ matrix.cc_branch }} https://github.com/olimorris/codecompanion.nvim deps/codecompanion.nvim
+          make deps/plenary.nvim
+
+      - name: Run compatibility tests 🧪
+        run: |
+          nvim --version
+          make test-compat
