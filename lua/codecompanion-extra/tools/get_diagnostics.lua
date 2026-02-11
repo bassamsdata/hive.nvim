@@ -27,6 +27,7 @@
 local Path = require("plenary.path")
 local helpers = require("codecompanion.utils.files")
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 local tool_helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
 
 local api = vim.api
@@ -37,10 +38,9 @@ local fmt = string.format
 -- Configuration
 --------------------------------------------------------------------------------
 
-local DEBUG_ENABLED = true
+local DEBUG_ENABLED = false
 local LOG_FILE_PATH = vim.fn.stdpath("cache") .. "/get_diagnostics_debug.log"
 
--- Polling configuration (namu-style)
 local CONFIG = {
   -- Initial delay before first poll (let LSP start processing)
   initial_delay_ms = 300,
@@ -544,12 +544,11 @@ return {
   name = "get_diagnostics",
   cmds = {
     ---Execute the diagnostics retrieval (async)
-    ---When cb is provided, CodeCompanion treats this as async and waits for cb() to be called
     ---@param _self CodeCompanion.Tool.GetDiagnostics
     ---@param args table
-    ---@param _input? any
-    ---@param cb? fun(result: {status: "success"|"error", data: string}) Async callback
-    function(_self, args, _input, cb)
+    ---@param opts table
+    compat.cmds(function(_self, args, opts)
+      local cb = opts.output_cb
       if cb then
         -- Async mode: use callback
         get_diagnostics_async(args, cb)
@@ -567,7 +566,7 @@ return {
         end, 50)
         return result or { status = "error", data = "Timeout waiting for diagnostics" }
       end
-    end,
+    end),
   },
   schema = {
     type = "function",
@@ -612,20 +611,20 @@ Results are sorted by severity (errors first) then by line number.]],
     show_output_in_chat = false,
   },
   handlers = {
-    on_exit = function(_tools)
+    on_exit = compat.handler_on_exit(function(_self, _meta)
       log:trace("[Get Diagnostics Tool] on_exit handler executed")
-    end,
+    end),
   },
   output = {
-    prompt = function(self, _tools)
+    prompt = compat.output_prompt(function(self, _meta)
       local args = self.args
       local filepath = vim.fn.fnamemodify(args.filepath, ":.")
       local severity_info = args.severity and args.severity ~= "all" and fmt(" (severity: %s)", args.severity) or ""
       return fmt("Get diagnostics from %s%s?", filepath, severity_info)
-    end,
+    end),
 
-    success = function(self, tools, _cmd, stdout)
-      local chat = tools.chat
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local llm_output = vim.iter(stdout):flatten():join("\n")
       local filepath = vim.fn.fnamemodify(self.args.filepath, ":.")
 
@@ -640,19 +639,25 @@ Results are sorted by severity (errors first) then by line number.]],
       end
 
       chat:add_tool_output(self, llm_output, user_output)
-    end,
+    end),
 
-    error = function(self, tools, _cmd, stderr)
-      local chat = tools.chat
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local errors = vim.iter(stderr):flatten():join("\n")
       log:debug("[Get Diagnostics Tool] Error output: %s", stderr)
       chat:add_tool_output(self, errors)
-    end,
+    end),
 
-    rejected = function(self, tools, cmd, opts)
+    rejected = compat.output_rejected(function(self, meta)
       local message = "The user rejected the get diagnostics tool"
-      opts = vim.tbl_extend("force", { message = message }, opts or {})
-      tool_helpers.rejected(self, tools, cmd, opts)
-    end,
+      if compat.is_new_api() then
+        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
+        opts.tools = meta.tools
+        tool_helpers.rejected(self, opts)
+      else
+        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
+        tool_helpers.rejected(self, meta.tools, meta.cmd, opts)
+      end
+    end),
   },
 }

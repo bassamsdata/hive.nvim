@@ -1,5 +1,6 @@
 local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 
 local api = vim.api
 local fmt = string.format
@@ -734,9 +735,9 @@ return {
     ---Execute the ask_user tool
     ---@param tools CodeCompanion.Tools
     ---@param args table
-    ---@param input? any
-    ---@param output_handler fun(result: {status: string, data: any})
-    function(tools, args, input, output_handler)
+    ---@param opts table
+    compat.cmds(function(tools, args, opts)
+      local output_handler = opts.output_cb
       if not tools or not tools.chat then
         log:error("[AskUser] No chat context available")
         return {
@@ -760,6 +761,7 @@ return {
           questions = questions,
           context = args.context,
           callback = function(result)
+            if not output_handler then return end
             if result.status == "success" then
               local formatted = format_answers_for_llm(questions, result.data)
               output_handler({
@@ -784,7 +786,7 @@ return {
       end)
 
       return nil
-    end,
+    end),
   },
   env = {
     ---Check if the result is a rejection
@@ -912,29 +914,28 @@ WHEN TO USE:
 - Missing context: Ask for information you need]],
   handlers = {
     ---Setup handler called before tool execution
-    ---@param tool CodeCompanion.Tools.Tool
-    ---@param tools CodeCompanion.Tools
-    setup = function(tool, tools)
+    ---@param self CodeCompanion.Tools.Tool
+    ---@param meta table
+    setup = compat.handler_setup(function(self, meta)
       log:debug("[AskUser] Setup called")
-    end,
+    end),
 
     ---Called when tool execution completes
-    ---@param tool CodeCompanion.Tools.Tool
-    ---@param tools CodeCompanion.Tools
-    on_exit = function(tool, tools)
+    ---@param self CodeCompanion.Tools.Tool
+    ---@param meta table
+    on_exit = compat.handler_on_exit(function(self, meta)
       log:debug("[AskUser] on_exit called")
       -- Cleanup if form is still active
       if active_form then active_form:close() end
-    end,
+    end),
   },
   output = {
     ---Format the success message
-    ---@param tool CodeCompanion.Tools.Tool
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd function
+    ---@param self CodeCompanion.Tools.Tool
     ---@param stdout table
-    success = function(tool, tools, cmd, stdout)
-      local chat = tools.chat
+    ---@param meta table
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       -- stdout is self.tool_output which contains the data we passed to output_handler
       local output = vim.iter(stdout):flatten():join("\n")
 
@@ -949,39 +950,43 @@ The user has answered your questions. Use their responses to proceed with the ta
 
       local user_output = "✓ Questions answered"
 
-      chat:add_tool_output(tool, llm_output, user_output)
-    end,
+      chat:add_tool_output(self, llm_output, user_output)
+    end),
 
     ---Format the error message
-    ---@param tool CodeCompanion.Tools.Tool
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd function
+    ---@param self CodeCompanion.Tools.Tool
     ---@param stderr table
-    error = function(tool, tools, cmd, stderr)
-      local chat = tools.chat
+    ---@param meta table
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local error_msg = vim.iter(stderr):flatten():join("\n")
 
       if error_msg:match("[Cc]ancelled") then
         local llm_output =
           "The user cancelled the questions form. They may not want to answer right now. Consider proceeding with reasonable defaults or rephrasing your questions."
         local user_output = "✗ Questions cancelled"
-        chat:add_tool_output(tool, llm_output, user_output)
+        chat:add_tool_output(self, llm_output, user_output)
       else
-        chat:add_tool_output(tool, fmt("Error asking user questions: %s", error_msg))
+        chat:add_tool_output(self, fmt("Error asking user questions: %s", error_msg))
       end
-    end,
+    end),
 
     ---Rejection message back to the LLM
-    ---@param tool CodeCompanion.Tools.Tool
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
-    ---@param opts table
+    ---@param self CodeCompanion.Tools.Tool
+    ---@param meta table
     ---@return nil
-    rejected = function(tool, tools, cmd, opts)
+    rejected = compat.output_rejected(function(self, meta)
+      local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
       local message = "The user rejected the questions"
-      opts = vim.tbl_extend("force", { message = message }, opts or {})
-      helpers.rejected(tool, tools, cmd, opts)
-    end,
+      if compat.is_new_api() then
+        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
+        opts.tools = meta.tools
+        helpers.rejected(self, opts)
+      else
+        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
+        helpers.rejected(self, meta.tools, meta.cmd, opts)
+      end
+    end),
   },
   opts = {
     requires_approval = false,

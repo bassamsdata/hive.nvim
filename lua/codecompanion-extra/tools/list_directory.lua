@@ -3,6 +3,7 @@
 -- Uses vim.fs for cross-platform compatibility
 
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 
 local fmt = string.format
 
@@ -108,13 +109,13 @@ return {
   name = "list_directory",
   cmds = {
     ---Execute the list_directory command
-    ---@param self CodeCompanion.Tool.ListDirectory
-    ---@param args table The arguments from the LLM's tool call
-    ---@param input? any The output from the previous function call
+    ---@param tools CodeCompanion.Tools
+    ---@param args table
+    ---@param opts table
     ---@return { status: "success"|"error", data: string|string[] }
-    function(self, args, input)
-      return list_dir(args, self.tool.opts)
-    end,
+    compat.cmds(function(tools, args, opts)
+      return list_dir(args, tools.tool and tools.tool.opts)
+    end),
   },
   schema = {
     type = "function",
@@ -153,38 +154,24 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
     },
   },
   handlers = {
-    ---@param tools CodeCompanion.Tools The tool object
-    ---@return nil
-    on_exit = function(tools)
+    on_exit = compat.handler_on_exit(function(self, meta)
       log:trace("[List Directory Tool] on_exit handler executed")
-    end,
+    end),
   },
   output = {
-    ---Returns the command that will be executed
-    ---@param self CodeCompanion.Tool.ListDirectory
-    ---@param args { tools: CodeCompanion.Tools }
-    ---@return string
-    cmd_string = function(self, args)
+    cmd_string = compat.output_cmd_string(function(self, meta)
       local depth_info = self.args.depth and fmt(" (depth: %d)", self.args.depth) or ""
       local pattern_info = self.args.pattern and fmt(" [pattern: %s]", self.args.pattern) or ""
       local hidden_info = self.args.hidden and " (including hidden)" or ""
       return fmt("ls %s%s%s%s", self.args.path or ".", depth_info, pattern_info, hidden_info)
-    end,
+    end),
 
-    ---The message which is shared with the user when asking for their approval
-    ---@param self CodeCompanion.Tools.Tool
-    ---@param tools CodeCompanion.Tools
-    ---@return nil|string
-    prompt = function(self, tools)
+    prompt = compat.output_prompt(function(self, meta)
       return fmt("List directory `%s`?", self.args.path or ".")
-    end,
+    end),
 
-    ---@param self CodeCompanion.Tool.ListDirectory
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table The command that was executed
-    ---@param stdout table The output from the command
-    success = function(self, tools, cmd, stdout)
-      local chat = tools.chat
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local path = self.args.path or "."
       local data = stdout[1]
 
@@ -201,14 +188,10 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
         local msg = fmt("Listed `%s`: %s", path, data)
         chat:add_tool_output(self, fmt(llm_output, msg), msg)
       end
-    end,
+    end),
 
-    ---@param self CodeCompanion.Tool.ListDirectory
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
-    ---@param stderr table The error output from the command
-    error = function(self, tools, cmd, stderr)
-      local chat = tools.chat
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local path = self.args.path or "."
       local errors = vim.iter(stderr):flatten():join("\n")
       log:debug("[List Directory Tool] Error output: %s", stderr)
@@ -223,19 +206,19 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
         errors
       )
       chat:add_tool_output(self, error_output)
-    end,
+    end),
 
-    ---Rejection message back to the LLM
-    ---@param self CodeCompanion.Tool.ListDirectory
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
-    ---@param opts table
-    ---@return nil
-    rejected = function(self, tools, cmd, opts)
+    rejected = compat.output_rejected(function(self, meta)
       local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
       local message = "The user rejected listing the directory"
-      opts = vim.tbl_extend("force", { message = message }, opts or {})
-      helpers.rejected(self, tools, cmd, opts)
-    end,
+      if compat.is_new_api() then
+        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
+        opts.tools = meta.tools
+        helpers.rejected(self, opts)
+      else
+        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
+        helpers.rejected(self, meta.tools, meta.cmd, opts)
+      end
+    end),
   },
 }

@@ -7,6 +7,7 @@
 -- Maintain visibility into workflow progress
 
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 
 local api = vim.api
 local fmt = string.format
@@ -310,8 +311,9 @@ local todowrite = {
     ---Execute the todowrite tool
     ---@param tools CodeCompanion.Tools
     ---@param args table
+    ---@param opts table
     ---@return { status: string, data: any }
-    function(tools, args)
+    compat.cmds(function(tools, args, opts)
       if not tools or not tools.chat then
         return {
           status = "error",
@@ -361,7 +363,7 @@ local todowrite = {
           is_new = is_new,
         },
       }
-    end,
+    end),
   },
   schema = {
     type = "function",
@@ -442,31 +444,30 @@ Example workflow:
     end,
   },
   handlers = {
-    on_exit = function(tools)
+    on_exit = compat.handler_on_exit(function(_self, _meta)
       log:trace("[TodoWrite Tool] on_exit handler executed")
-    end,
+    end),
   },
   output = {
     ---@param self CodeCompanion.Tool.TodoWrite
     ---@return string
-    cmd_string = function(self)
+    cmd_string = compat.output_cmd_string(function(self, _meta)
       local count = self.args.todos and #self.args.todos or 0
       return fmt("Update task list (%d items)", count)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoWrite
     ---@return string
-    prompt = function(self)
+    prompt = compat.output_prompt(function(self, _meta)
       local count = self.args.todos and #self.args.todos or 0
       return fmt("Update task list with %d item%s?", count, count == 1 and "" or "s")
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoWrite
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
     ---@param stdout table
-    success = function(self, tools, cmd, stdout)
-      local chat = tools.chat
+    ---@param meta table
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local result = stdout[1]
 
       if type(result) ~= "table" or not result.todos then
@@ -495,27 +496,26 @@ Task list %s. Continue with your work.]],
       local user_output = build_user_output_write(todos, action)
 
       chat:add_tool_output(self, llm_output, user_output)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoWrite
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
     ---@param stderr table
-    error = function(self, tools, cmd, stderr)
-      local chat = tools.chat
+    ---@param meta table
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local errors = vim.iter(stderr):flatten():join("\n")
       log:debug("[TodoWrite Tool] Error: %s", errors)
 
       local error_output = fmt("%s Failed to update task list: %s", ICONS.cancelled, errors)
       chat:add_tool_output(self, error_output, error_output)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoWrite
-    ---@param tools CodeCompanion.Tools
-    rejected = function(self, tools)
-      local chat = tools.chat
+    ---@param meta table
+    rejected = compat.output_rejected(function(self, meta)
+      local chat = meta.tools.chat
       chat:add_tool_output(self, "User rejected task list update", "Task list update cancelled")
-    end,
+    end),
   },
 }
 
@@ -529,8 +529,10 @@ local todoread = {
   cmds = {
     ---Execute the todoread tool
     ---@param tools CodeCompanion.Tools
+    ---@param args table
+    ---@param opts table
     ---@return { status: string, data: any }
-    function(tools)
+    compat.cmds(function(tools, args, opts)
       if not tools or not tools.chat then
         return {
           status = "error",
@@ -548,7 +550,7 @@ local todoread = {
           todos = todos,
         },
       }
-    end,
+    end),
   },
   schema = {
     type = "function",
@@ -578,29 +580,28 @@ Use this to:
     end,
   },
   handlers = {
-    on_exit = function(tools)
+    on_exit = compat.handler_on_exit(function(_self, _meta)
       log:trace("[TodoRead Tool] on_exit handler executed")
-    end,
+    end),
   },
   output = {
     ---@param self CodeCompanion.Tool.TodoRead
     ---@return string
-    cmd_string = function(self)
+    cmd_string = compat.output_cmd_string(function(self, _meta)
       return "Read task list"
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoRead
     ---@return string
-    prompt = function(self)
+    prompt = compat.output_prompt(function(self, _meta)
       return "Read current task list?"
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoRead
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
     ---@param stdout table
-    success = function(self, tools, cmd, stdout)
-      local chat = tools.chat
+    ---@param meta table
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local result = stdout[1]
 
       if type(result) ~= "table" or not result.todos then
@@ -625,27 +626,26 @@ Review the task list above and continue with your work.]],
       local user_output = build_user_output_read(todos)
 
       chat:add_tool_output(self, llm_output, user_output)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoRead
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
     ---@param stderr table
-    error = function(self, tools, cmd, stderr)
-      local chat = tools.chat
+    ---@param meta table
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local errors = vim.iter(stderr):flatten():join("\n")
       log:debug("[TodoRead Tool] Error: %s", errors)
 
       local error_output = fmt("%s Failed to read task list: %s", ICONS.cancelled, errors)
       chat:add_tool_output(self, error_output, error_output)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.TodoRead
-    ---@param tools CodeCompanion.Tools
-    rejected = function(self, tools)
-      local chat = tools.chat
+    ---@param meta table
+    rejected = compat.output_rejected(function(self, meta)
+      local chat = meta.tools.chat
       chat:add_tool_output(self, "User rejected reading task list", "Task list read cancelled")
-    end,
+    end),
   },
 }
 

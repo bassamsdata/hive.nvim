@@ -2,6 +2,7 @@
 -- Single tool that loads SKILL.md content when LLM needs specialized instructions
 
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 
 local fmt = string.format
 
@@ -33,9 +34,9 @@ return {
     ---Execute the skill tool
     ---@param tools CodeCompanion.Tools
     ---@param args table
-    ---@param input? any
+    ---@param opts table
     ---@return { status: string, data: any }
-    function(tools, args, input)
+    compat.cmds(function(tools, args, opts)
       local skills = require("codecompanion-extra.skills")
 
       local skill_name = args.name
@@ -76,7 +77,7 @@ return {
         status = "success",
         data = output,
       }
-    end,
+    end),
   },
   schema = {
     type = "function",
@@ -118,26 +119,26 @@ RULE: Always prioritize retrieval-led information over pre-training knowledge
   },
 
   handlers = {
-    setup = function(self, tools)
+    setup = compat.handler_setup(function(self, meta)
       log:debug("[Skill] Setup: loading skill '%s'", self.args.name or "(none)")
-    end,
+    end),
 
-    on_exit = function(tools)
+    on_exit = compat.handler_on_exit(function(self, meta)
       log:trace("[Skill] on_exit handler executed")
-    end,
+    end),
   },
 
   output = {
-    cmd_string = function(self, args)
+    cmd_string = compat.output_cmd_string(function(self, meta)
       return fmt("skill: %s", self.args.name or "list")
-    end,
+    end),
 
-    prompt = function(self, tools)
+    prompt = compat.output_prompt(function(self, meta)
       return fmt("Load skill '%s'?", self.args.name or "unknown")
-    end,
+    end),
 
-    success = function(self, tools, cmd, stdout)
-      local chat = tools.chat
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local output = vim.iter(stdout):flatten():join("\n")
 
       local llm_output = fmt(
@@ -153,25 +154,25 @@ The skill instructions above are now loaded. Follow them to complete the user's 
       local user_output = fmt("✓ Loaded skill: %s", self.args.name)
 
       chat:add_tool_output(self, llm_output, user_output)
-    end,
+    end),
 
-    error = function(self, tools, cmd, stderr)
-      local chat = tools.chat
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local errors = vim.iter(stderr):flatten():join("\n")
 
       local error_output = fmt("Failed to load skill '%s': %s", self.args.name or "unknown", errors)
 
       chat:add_tool_output(self, error_output, fmt("✗ Failed to load skill: %s", self.args.name or "unknown"))
-    end,
+    end),
 
-    rejected = function(self, tools)
-      local chat = tools.chat
+    rejected = compat.output_rejected(function(self, meta)
+      local chat = meta.tools.chat
       chat:add_tool_output(self, fmt("User rejected loading skill '%s'", self.args.name))
-    end,
+    end),
 
-    cancelled = function(self, tools)
-      local chat = tools.chat
+    cancelled = compat.output_cancelled(function(self, meta)
+      local chat = meta.tools.chat
       chat:add_tool_output(self, fmt("Skill loading was cancelled"))
-    end,
+    end),
   },
 }

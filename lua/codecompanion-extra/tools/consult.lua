@@ -8,6 +8,7 @@
 -- - performance: Performance optimization guidance
 
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 local subagent = require("codecompanion-extra.tools.subagent")
 
 local api = vim.api
@@ -108,6 +109,7 @@ local function build_consultation_prompt(args)
   local parts = {}
 
   if args.urgency == "blocking" then
+    -- TODO:I need to re-evalute this one fi it's better or not to enhance performance of Sage
     table.insert(parts, "**URGENT - BLOCKING**: This is blocking my work and needs immediate guidance.\n")
   elseif args.urgency == "important" then
     table.insert(parts, "**Important**: This is a significant decision that needs careful consideration.\n")
@@ -617,9 +619,9 @@ return {
     ---Execute the consult tool (async pattern)
     ---@param tools CodeCompanion.Tools
     ---@param args table
-    ---@param input? any
-    ---@param output_handler fun(result: {status: string, data: any})
-    function(tools, args, input, output_handler)
+    ---@param opts table
+    compat.cmds(function(tools, args, opts)
+      local output_handler = opts.output_cb
       if not tools or not tools.chat then
         log:error("[Consult] No chat context available")
         return {
@@ -647,7 +649,7 @@ return {
       execute_consultation(args, tools.chat, output_handler)
 
       return nil
-    end,
+    end),
   },
   schema = {
     type = "function",
@@ -717,22 +719,22 @@ Unlike task delegation (for work completion), consult is for getting expert opin
     },
   },
   handlers = {
-    on_exit = function(tools)
+    on_exit = compat.handler_on_exit(function(_self, _meta)
       log:trace("[Consult Tool] on_exit handler executed")
-    end,
+    end),
   },
   output = {
     ---@param self CodeCompanion.Tool.Consult
     ---@return string
-    cmd_string = function(self)
+    cmd_string = compat.output_cmd_string(function(self, _meta)
       local info = get_advisor_info(self.args.advisor_type)
       if self.args.follow_up then return fmt("%s Follow-up with %s", info.icon, info.display_name) end
       return fmt("%s Consulting %s", info.icon, info.display_name)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.Consult
     ---@return string
-    prompt = function(self)
+    prompt = compat.output_prompt(function(self, _meta)
       local info = get_advisor_info(self.args.advisor_type)
       local description = self.args.description or subagent.utils.truncate(self.args.question, 80)
       if self.args.follow_up then
@@ -740,14 +742,13 @@ Unlike task delegation (for work completion), consult is for getting expert opin
         return fmt("%s Send follow-up to %s?\n\nMessage: %s", info.icon, info.display_name, question_preview)
       end
       return fmt("%s Consult %s?\n\n%s", info.icon, info.display_name, description)
-    end,
+    end),
 
     ---@param self CodeCompanion.Tool.Consult
-    ---@param tools CodeCompanion.Tools
-    ---@param cmd table
     ---@param stdout table
-    success = function(self, tools, cmd, stdout)
-      local chat = tools.chat
+    ---@param meta table
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local result = stdout[1]
 
       if type(result) ~= "table" or not result.result then
@@ -800,15 +801,15 @@ If you need clarification or have follow-up questions, you can use the consult t
       local user_output = table.concat(user_lines, "\n")
 
       chat:add_tool_output(self, llm_output, user_output)
-    end,
+    end),
 
-    error = function(self, tools, cmd, stderr)
-      local chat = tools.chat
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local output = vim.iter(stderr):flatten():join("\n")
       local info = get_advisor_info(self.args.advisor_type)
 
       local error_output = fmt("Consultation with %s failed:\n%s", info.display_name, output)
       chat:add_tool_output(self, error_output, error_output)
-    end,
+    end),
   },
 }

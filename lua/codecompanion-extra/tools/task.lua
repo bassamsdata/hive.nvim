@@ -3,6 +3,7 @@
 -- Provides real-time status updates via virtual line notifications with animated spinner
 
 local log = require("codecompanion.utils.log")
+local compat = require("codecompanion-extra.tools.compat")
 local subagent = require("codecompanion-extra.tools.subagent")
 
 local api = vim.api
@@ -709,11 +710,11 @@ return {
   name = "task",
   cmds = {
     ---Execute the task tool (async pattern - does not return immediately)
-    ---@param tools table The tools coordinator object
-    ---@param args table The arguments from the LLM's tool call
-    ---@param input? any The output from the previous function call
-    ---@param output_handler fun(result: {status: string, data: any}) Callback for async completion
-    function(tools, args, input, output_handler)
+    ---@param tools table
+    ---@param args table
+    ---@param opts table
+    compat.cmds(function(tools, args, opts)
+      local output_handler = opts.output_cb
       if not tools or not tools.chat then
         log:error("[Task] No chat context available")
         return {
@@ -727,7 +728,7 @@ return {
       execute_tasks(args, tools.chat, output_handler)
 
       return nil
-    end,
+    end),
   },
   schema = {
     type = "function",
@@ -799,20 +800,20 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
     },
   },
   handlers = {
-    on_exit = function(tools)
+    on_exit = compat.handler_on_exit(function(_self, _meta)
       log:trace("[Task Tool] on_exit handler executed")
-    end,
+    end),
   },
   output = {
-    cmd_string = function(self, args)
+    cmd_string = compat.output_cmd_string(function(self, _meta)
       local tasks = self.args.tasks or {}
       if #tasks == 1 then
         return fmt("Spawn %s subagent: %s", subagent.utils.capitalize(tasks[1].subagent_type), tasks[1].description)
       end
       return fmt("Spawn %d subagents in parallel", #tasks)
-    end,
+    end),
 
-    prompt = function(self, tools)
+    prompt = compat.output_prompt(function(self, _meta)
       local tasks = self.args.tasks or {}
       local count = #tasks
       if count == 0 then return "Run task tool?" end
@@ -832,10 +833,10 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
 
       local header = count == 1 and "Spawn subagent?" or fmt("Spawn %d subagents in parallel?", count)
       return header .. "\n\n" .. table.concat(descriptions, "\n")
-    end,
+    end),
 
-    success = function(self, tools, cmd, stdout)
-      local chat = tools.chat
+    success = compat.output_success(function(self, stdout, meta)
+      local chat = meta.tools.chat
       local output = vim.iter(stdout):flatten():join("\n")
 
       local tasks = self.args.tasks or {}
@@ -914,10 +915,10 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
       local user_output = table.concat(user_lines, "\n")
 
       chat:add_tool_output(self, output, user_output)
-    end,
+    end),
 
-    error = function(self, tools, cmd, stderr)
-      local chat = tools.chat
+    error = compat.output_error(function(self, stderr, meta)
+      local chat = meta.tools.chat
       local output = vim.iter(stderr):flatten():join("\n")
 
       local tasks = self.args.tasks or {}
@@ -983,6 +984,6 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
       local user_output = table.concat(user_lines, "\n")
 
       chat:add_tool_output(self, output, user_output)
-    end,
+    end),
   },
 }
