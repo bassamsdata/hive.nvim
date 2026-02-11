@@ -488,20 +488,36 @@ function M._add_agent_tools(chat, agent, agent_name)
   local cc_config = require("codecompanion.config")
   local tools_config = cc_config.interactions.chat.tools
 
+  -- NOTE: v19+ wraps tool_config inside opts table; v18.x passes it as a direct arg
+  local has_new_api = chat.tool_registry.add_single_tool ~= nil
   local group_name = "agent_" .. agent_name
 
   if tools_config.groups and tools_config.groups[group_name] then
-    chat.tool_registry:add_group(group_name, tools_config)
+    if has_new_api then
+      chat.tool_registry:add_group(group_name, { config = tools_config })
+    else
+      chat.tool_registry:add_group(group_name, tools_config)
+    end
   else
     for _, tool_name in ipairs(agent.tools) do
       if chat.tool_registry.in_use[tool_name] then goto continue end
 
       local tool_config = tools_config[tool_name]
       if tool_config then
-        chat.tool_registry:add(tool_name, tool_config, { visible = false })
+        if has_new_api then
+          chat.tool_registry:add(tool_name, { config = tool_config, visible = false })
+        else
+          chat.tool_registry:add(tool_name, tool_config, { visible = false })
+        end
       else
         local extra_tool = M._get_extra_tool(tool_name)
-        if extra_tool then chat.tool_registry:add(tool_name, extra_tool, { visible = false }) end
+        if extra_tool then
+          if has_new_api then
+            chat.tool_registry:add(tool_name, { config = extra_tool, visible = false })
+          else
+            chat.tool_registry:add(tool_name, extra_tool, { visible = false })
+          end
+        end
       end
       ::continue::
     end
