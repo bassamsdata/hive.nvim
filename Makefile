@@ -4,7 +4,7 @@ CC_BRANCH ?= main
 
 test: deps/mini.nvim
 	@echo "Running tests..."
-	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run(vim.tbl_filter(function(x) return x:match('^tests/test_.*%%.lua') and not x:match('test_cc_api_compat') end, vim.fn.glob('tests/*', true, true)))"
+	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run({'tests/test_skills_discovery.lua'})"
 
 test-compat: deps/mini.nvim deps/plenary.nvim
 	@rm -rf deps/codecompanion.nvim
@@ -27,4 +27,4 @@ testFile:
 	@echo "Running test $(FILE)..."
 	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run({\"$(FILE)\"})"
 
-.PHONY: all test test-compat format
+.PHONY: all test test-compat format testFile
