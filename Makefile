@@ -10,7 +10,7 @@ test-compat: deps/mini.nvim deps/plenary.nvim
 	@rm -rf deps/codecompanion.nvim
 	git clone --filter=blob:none --branch $(CC_BRANCH) https://github.com/olimorris/codecompanion.nvim deps/codecompanion.nvim
 	@echo "Running API compatibility tests against codecompanion.nvim ($(CC_BRANCH))..."
-	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run_file('tests/test_cc_api_compat.lua')"
+	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run_file('tests_compat/test_cc_api_compat.lua')"
 
 deps/mini.nvim:
 	@mkdir -p deps
