@@ -5,6 +5,8 @@ local api = vim.api
 
 local M = {}
 
+local _scrolled_namespaces = {}
+
 -- ============================================================================
 -- Highlight Detection
 -- ============================================================================
@@ -33,6 +35,29 @@ function M.detect_highlight(line, icons)
   return HIGHLIGHTS.default
 end
 
+---Scroll window to end if conditions are met
+---@param bufnr number
+---@param ns_id number
+---@param line_count number
+function M._scroll_to_end(bufnr, ns_id, line_count)
+  local config = require("codecompanion-extra.config").config.tools.status or {}
+  if config.scroll_to_show == false or _scrolled_namespaces[ns_id] then return end
+
+  local ok, ui_utils = pcall(require, "codecompanion.utils.ui")
+  local window = ok and ui_utils.buf_get_win(bufnr)
+
+  if window and api.nvim_win_is_valid(window) then
+    local cursor = api.nvim_win_get_cursor(window)
+    if api.nvim_get_current_win() ~= window or (line_count - cursor[1]) <= (config.scroll_cursor_distance or 5) then
+      _scrolled_namespaces[ns_id] = true
+      api.nvim_win_call(window, function()
+        pcall(api.nvim_win_set_cursor, 0, { line_count, 0 })
+        vim.cmd("normal! zz")
+      end)
+    end
+  end
+end
+
 -- ============================================================================
 -- Virtual Line Rendering
 -- ============================================================================
@@ -41,9 +66,7 @@ end
 ---@param args { bufnr: number, ns_id: number, text: string, icons?: table }
 function M.render(args)
   local bufnr = args.bufnr
-  if not bufnr or not api.nvim_buf_is_valid(bufnr) then
-    return
-  end
+  if not bufnr or not api.nvim_buf_is_valid(bufnr) then return end
 
   local lines = vim.split(args.text, "\n")
   local virt_lines = { { { "", "Normal" } } }
@@ -65,19 +88,18 @@ function M.render(args)
     virt_lines_above = false,
     priority = 100,
   })
+
+  M._scroll_to_end(bufnr, args.ns_id, buf_lines)
 end
 
 ---Clear virtual lines from buffer
 ---@param bufnr number
 ---@param ns_id number
 function M.clear(bufnr, ns_id)
-  if not bufnr or not api.nvim_buf_is_valid(bufnr) then
-    return
-  end
+  _scrolled_namespaces[ns_id] = nil
+  if not bufnr or not api.nvim_buf_is_valid(bufnr) then return end
   vim.schedule(function()
-    if api.nvim_buf_is_valid(bufnr) then
-      pcall(api.nvim_buf_clear_namespace, bufnr, ns_id, 0, -1)
-    end
+    if api.nvim_buf_is_valid(bufnr) then pcall(api.nvim_buf_clear_namespace, bufnr, ns_id, 0, -1) end
   end)
 end
 
