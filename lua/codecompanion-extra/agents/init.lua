@@ -220,6 +220,20 @@ function M._register_extra_tools()
       or "Consult specialist advisors for expert guidance",
     opts = {},
   }
+
+  local cmd_runner_tool = require("codecompanion-extra.tools.cmd_runner")
+  chat_tools["cmd_runner"] = {
+    callback = cmd_runner_tool,
+    description = cmd_runner_tool.schema
+        and cmd_runner_tool.schema["function"]
+        and cmd_runner_tool.schema["function"].description
+      or "Run shell commands with timeout and filtering",
+    opts = vim.tbl_deep_extend("force", {
+      allowed_in_yolo_mode = false,
+      require_approval_before = true,
+      require_cmd_approval = true,
+    }, chat_tools["cmd_runner"] and chat_tools["cmd_runner"].opts or {}),
+  }
 end
 
 ---Handle agent switching with toggle or select

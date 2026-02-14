@@ -31,6 +31,9 @@ M.tools = {
   consult = function()
     return (require("codecompanion-extra.tools.consult"))
   end,
+  cmd_runner = function()
+    return (require("codecompanion-extra.tools.cmd_runner"))
+  end,
 }
 
 ---Get a tool definition

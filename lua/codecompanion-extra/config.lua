@@ -79,6 +79,16 @@ M.defaults = {
     list_directory = { enabled = true },
     todowrite = { enabled = true },
     todoread = { enabled = true },
+    cmd_runner = {
+      enabled = true,
+      opts = {
+        timeout = 60,
+        auto_allow_patterns = {},
+        always_confirm_patterns = {},
+        show_timer_after = 5,
+        show_spinner = true,
+      },
+    },
     status = {
       scroll_to_show = true,
       scroll_cursor_distance = 10,
