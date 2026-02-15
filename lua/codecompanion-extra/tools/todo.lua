@@ -22,9 +22,9 @@ local ICONS = {
   in_progress     = "",
   completed       = "",
   cancelled       = "󰅖",
-  high_priority   = "Ⓗ",
-  medium_priority = "Ⓜ",
-  low_priority    = "Ⓛ",
+  high_priority   = "|H|",
+  medium_priority = "|M|",
+  low_priority    = "|L|",
   todo            = "",
   progress        = "󰦖",
   timer           = "󰁫",
@@ -897,9 +897,11 @@ function M.close_viewer()
 end
 
 ---Setup keymap for todo viewer
----@param keymap? string Default "gT"
+---@param keymap? string|table Default "gT"
+---@return nil
 function M.setup_keymap(keymap)
   keymap = keymap or "gT"
+  local modes = type(keymap) == "table" and keymap or { n = keymap }
 
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
@@ -908,7 +910,7 @@ function M.setup_keymap(keymap)
   if not chat_keymaps then return end
 
   chat_keymaps["todo_viewer"] = {
-    modes = { n = keymap },
+    modes = modes,
     index = 51,
     description = "[Todo] View task list",
     callback = function(chat)
