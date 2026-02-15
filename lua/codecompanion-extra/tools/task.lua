@@ -21,6 +21,10 @@ local ICONS = {
   task = "󰤖",
 }
 
+local AGENT_ICONS = { ICONS.explorer, ICONS.general, ICONS.analyzer, ICONS.default }
+
+local SUSPICIOUS_FAST_MS = 2000
+
 -- ============================================================================
 -- TaskBatch Class
 -- ============================================================================
@@ -138,13 +142,13 @@ function TaskBatch:build_status_text(spinner_char)
       local status_text
 
       if session.status == "running" then
-        local tool_info = summary.completed > 0 and fmt(" | Tools: %d", summary.completed) or ""
+        local tool_info = summary.completed > 0 and fmt(" | ToolCalls: %d", summary.completed) or ""
         if summary.current then
           status_icon = spinner_char
           status_text = fmt("Running: `%s`%s", summary.current, tool_info)
         else
           status_icon = spinner_char
-          status_text = summary.completed > 0 and fmt("Working... | Tools: %d", summary.completed) or "Working..."
+          status_text = summary.completed > 0 and fmt("Working... | ToolCalls: %d", summary.completed) or "Working..."
         end
       elseif session.status == "completed" then
         local duration = utils.format_duration(session.duration_ms)
@@ -191,6 +195,7 @@ function TaskBatch:render_status()
     ns_id = self.ns_id,
     text = status_text,
     icons = subagent.utils.STATUS_ICONS,
+    agent_icons = AGENT_ICONS,
   })
 end
 
@@ -469,6 +474,24 @@ function TaskBatch:setup_child_listeners(child_bufnr, child_chat, task_index)
           end
 
           local final_status = chat_errored and "error" or "success"
+
+          -- Detect suspiciously fast completion: likely a misconfigured provider/model
+          local child_elapsed_ms = subagent.utils.get_elapsed_ms(child_state.last_tool_activity)
+          local tools_used = tool_count or (child_state and child_state.tool_count) or 0
+          local models = require("codecompanion-extra.tools.subagent.models")
+          local is_suspicious, suspicious_msg = models.detect_suspicious_fast_completion({
+            elapsed_ms = child_elapsed_ms,
+            tool_count = tools_used,
+            threshold_ms = SUSPICIOUS_FAST_MS,
+            subagent_type = task_def.subagent_type,
+            context = "task",
+          })
+
+          if final_status == "success" and is_suspicious then
+            final_status = "error"
+            result = suspicious_msg
+          end
+
           hierarchy.set_status(child_bufnr, chat_errored and "failed" or "completed", result)
 
           local elapsed_ms = subagent.utils.get_elapsed_ms(batch.start_time)
@@ -856,7 +879,7 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
 
         table.insert(
           user_lines,
-          fmt("───── **%s %s** Complete ─────", icon, subagent.utils.capitalize(task.subagent_type))
+          fmt("───── **%s %s Complete** ─────", icon, subagent.utils.capitalize(task.subagent_type))
         )
         table.insert(user_lines, fmt("  **%s Task:** %s", ICONS.task, task.description))
         if tools_match then

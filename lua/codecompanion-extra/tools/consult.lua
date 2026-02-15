@@ -27,6 +27,8 @@ local ICONS = {
   thinking = "",
 }
 
+local SUSPICIOUS_FAST_MS = 2000
+
 -- ============================================================================
 -- Active Consultations Registry
 -- ============================================================================
@@ -152,7 +154,7 @@ local function build_status_text(state, spinner_char)
   table.insert(lines, fmt("  %s %s", utils.STATUS_ICONS.tools, state.description))
 
   if state.status == "running" then
-    local tool_info = state.tool_count > 0 and fmt(" | Tools: %d", state.tool_count) or ""
+    local tool_info = state.tool_count > 0 and fmt(" | ToolCalls: %d", state.tool_count) or ""
     if state.current_tool then
       table.insert(lines, fmt("  %s Running: `%s`%s", spinner_char, state.current_tool, tool_info))
     else
@@ -296,20 +298,24 @@ function complete_consultation(state, status, result)
 
   subagent.lifecycle.cleanup_listeners(state.aug)
 
-  local output = {
-    status = status,
-    data = {
-      id = state.id,
-      advisor = state.advisor_type,
-      result = result,
-      duration_ms = elapsed_ms,
-      tool_count = state.tool_count,
-    },
-  }
+  local duration_str = subagent.utils.format_duration(elapsed_ms)
+
+  local consolidated = fmt(
+    [[<consultation_result id="%s" advisor="%s" status="%s" duration="%s" tool_calls="%d">
+%s
+</consultation_result>]],
+    state.id,
+    state.advisor_type,
+    status,
+    duration_str,
+    state.tool_count,
+    result
+  )
+
   _consultation_history[state.id] = state
   _active_consultations[state.parent_bufnr] = nil
 
-  if state.callback then state.callback(output) end
+  if state.callback then state.callback({ status = status, data = consolidated }) end
 end
 
 -- ============================================================================
@@ -373,11 +379,27 @@ local function setup_child_listeners(state)
             tool_count = state.tool_count,
           })
 
+          -- TODO: maybe we need to chewck if it's empty string??
           local extract_ok, result = pcall(subagent.messages.extract_result, state.child_chat)
           if not extract_ok then
             log:debug("[Consult] on_done extraction failed: %s", result)
             result = chat_errored and "Consultation failed (API error) and result extraction also failed"
               or "Consultation completed but result extraction failed"
+          end
+
+          -- Detect suspiciously fast completion: likely a misconfigured provider/model
+          local models = require("codecompanion-extra.tools.subagent.models")
+          local is_suspicious, suspicious_msg = models.detect_suspicious_fast_completion({
+            elapsed_ms = elapsed_ms,
+            tool_count = state.tool_count,
+            threshold_ms = SUSPICIOUS_FAST_MS,
+            subagent_type = state.advisor_type,
+            context = "consult",
+          })
+
+          if final_status == "success" and is_suspicious then
+            final_status = "error"
+            result = suspicious_msg
           end
 
           complete_consultation(state, final_status, result)
@@ -749,50 +771,35 @@ Unlike task delegation (for work completion), consult is for getting expert opin
     ---@param meta table
     success = compat.output_success(function(self, stdout, meta)
       local chat = meta.tools.chat
-      local result = stdout[1]
+      local output = vim.iter(stdout):flatten():join("\n")
 
-      if type(result) ~= "table" or not result.result then
-        local output = vim.iter(stdout):flatten():join("\n")
-        chat:add_tool_output(self, output, output)
-        return
-      end
-
-      local advisor = result.advisor
-      local advice = result.result
-      local duration_ms = result.duration_ms
-      local tool_count = result.tool_count or 0
-      local consultation_id = result.id
+      -- Parse structured attributes from the consultation_result tag
+      local consultation_id = output:match('id="([^"]*)"') or "unknown"
+      local advisor = output:match('advisor="([^"]*)"') or self.args.advisor_type
+      local duration_str = output:match('duration="([^"]*)"') or "0s"
+      local tool_count = tonumber(output:match('tool_calls="([^"]*)"')) or 0
 
       local info = get_advisor_info(advisor)
-      local duration_str = subagent.utils.format_duration(duration_ms or 0)
 
-      local llm_output = fmt(
-        [[<consultation id="%s" advisor="%s" duration="%s" tool_calls="%d">
-%s
-</consultation>
-
-The %s has provided guidance above. Review their recommendations and proceed accordingly.
-If you need clarification or have follow-up questions, you can use the consult tool with follow_up=true and consultation_id="%s".]],
-        consultation_id or "unknown",
-        advisor,
-        duration_str,
-        tool_count,
-        advice,
-        info.display_name,
-        consultation_id or "unknown"
-      )
+      local llm_output = output
+        .. fmt(
+          "\n\nThe %s has provided guidance above. Review their recommendations and proceed accordingly."
+            .. '\nIf you need clarification or have follow-up questions, you can use the consult tool with follow_up=true and consultation_id="%s".',
+          info.display_name,
+          consultation_id
+        )
 
       local description = self.args.description or "Consultation"
 
       local user_lines = {
-        fmt("───── **%s %s** Consultation Complete ─────", info.icon, info.display_name),
+        fmt("───── **%s %s Consultation Complete** ─────", info.icon, info.display_name),
         fmt("  %s %s", ICONS.thinking, description),
       }
       if tool_count > 0 then
         table.insert(user_lines, fmt("  **%s ToolCalls:** %d", subagent.utils.STATUS_ICONS.tools, tool_count))
       end
       table.insert(user_lines, fmt("  **%s Duration:** %s", subagent.utils.STATUS_ICONS.timer, duration_str))
-      if consultation_id then table.insert(user_lines, fmt("  **ID:** %s", consultation_id)) end
+      if consultation_id ~= "unknown" then table.insert(user_lines, fmt("  **ID:** %s", consultation_id)) end
       table.insert(
         user_lines,
         "─────────────────────────────────────────────"
