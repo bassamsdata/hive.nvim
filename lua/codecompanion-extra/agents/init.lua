@@ -157,7 +157,9 @@ function M._register_extra_tools()
 
   local task_tool = require("codecompanion-extra.tools.task")
   chat_tools["task"] = {
-    callback = task_tool,
+    callback = function()
+      return task_tool
+    end,
     description = task_tool.schema and task_tool.schema["function"] and task_tool.schema["function"].description
       or "Delegate tasks to specialized subagents (single or parallel)",
     opts = {},
@@ -165,7 +167,9 @@ function M._register_extra_tools()
 
   local ask_user_tool = require("codecompanion-extra.tools.ask_user")
   chat_tools["ask_user"] = {
-    callback = ask_user_tool,
+    callback = function()
+      return ask_user_tool
+    end,
     description = ask_user_tool.schema
         and ask_user_tool.schema["function"]
         and ask_user_tool.schema["function"].description
@@ -177,7 +181,9 @@ function M._register_extra_tools()
   if skills.has_skills() then
     local skill_tool = require("codecompanion-extra.tools.skill")
     chat_tools["skill"] = {
-      callback = skill_tool,
+      callback = function()
+        return skill_tool
+      end,
       description = skill_tool.schema and skill_tool.schema["function"] and skill_tool.schema["function"].description
         or "Load specialized skill instructions",
       opts = {},
@@ -186,7 +192,9 @@ function M._register_extra_tools()
 
   local list_dir_tool = require("codecompanion-extra.tools.list_directory")
   chat_tools["list_directory"] = {
-    callback = list_dir_tool,
+    callback = function()
+      return list_dir_tool
+    end,
     description = list_dir_tool.schema
         and list_dir_tool.schema["function"]
         and list_dir_tool.schema["function"].description
@@ -197,7 +205,9 @@ function M._register_extra_tools()
   local todo = require("codecompanion-extra.tools.todo")
   local todowrite = todo.get_todowrite()
   chat_tools["todowrite"] = {
-    callback = todowrite,
+    callback = function()
+      return todowrite
+    end,
     description = todowrite.schema and todowrite.schema["function"] and todowrite.schema["function"].description
       or "Create or update task list",
     opts = {},
@@ -205,7 +215,9 @@ function M._register_extra_tools()
 
   local todoread = todo.get_todoread()
   chat_tools["todoread"] = {
-    callback = todoread,
+    callback = function()
+      return todoread
+    end,
     description = todoread.schema and todoread.schema["function"] and todoread.schema["function"].description
       or "Read current task list",
     opts = {},
@@ -213,7 +225,9 @@ function M._register_extra_tools()
 
   local consult_tool = require("codecompanion-extra.tools.consult")
   chat_tools["consult"] = {
-    callback = consult_tool,
+    callback = function()
+      return consult_tool
+    end,
     description = consult_tool.schema
         and consult_tool.schema["function"]
         and consult_tool.schema["function"].description
@@ -223,7 +237,9 @@ function M._register_extra_tools()
 
   local cmd_runner_tool = require("codecompanion-extra.tools.cmd_runner")
   chat_tools["cmd_runner"] = {
-    callback = cmd_runner_tool,
+    callback = function()
+      return cmd_runner_tool
+    end,
     description = cmd_runner_tool.schema
         and cmd_runner_tool.schema["function"]
         and cmd_runner_tool.schema["function"].description
@@ -593,8 +609,8 @@ function M._apply_agent_system_prompt(chat, agent, agent_name)
         content = prompt,
       }, {
         visible = false,
-        index = 2,
-        _meta = { tag = "agent_system_prompt", agent = agent_name },
+        index = 2, -- Old API, we can remove it when codecompanion reach proper v21
+        _meta = { tag = "agent_system_prompt", agent = agent_name, index = 2 },
       })
     end
   end
