@@ -25,13 +25,13 @@ M.HIGHLIGHTS = {
 }
 
 M.STATUS_ICONS = {
-  pending = "",
-  running = "",
+  pending = "",
+  running = "",
   completed = "✓",
   failed = "✗",
-  cancelled = "",
-  timer = "",
-  tools = "",
+  cancelled = "",
+  timer = "󱎫",
+  tools = "",
 }
 
 -- ============================================================================
