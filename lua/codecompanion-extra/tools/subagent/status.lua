@@ -7,15 +7,12 @@ local M = {}
 
 local _scrolled_namespaces = {}
 
--- ============================================================================
--- Highlight Detection
--- ============================================================================
-
 ---Detect appropriate highlight group for a status line
 ---@param line string The line text to analyze
----@param icons? table Optional icon definitions for matching
+---@param icons? table Optional status icon definitions for matching
+---@param agent_icons? string[] Optional list of agent icon strings for agent-line detection
 ---@return string highlight_group The highlight group name
-function M.detect_highlight(line, icons)
+function M.detect_highlight(line, icons, agent_icons)
   local utils = require("codecompanion-extra.tools.subagent.utils")
   local HIGHLIGHTS = utils.HIGHLIGHTS
   icons = icons or utils.STATUS_ICONS
@@ -30,6 +27,12 @@ function M.detect_highlight(line, icons)
     return HIGHLIGHTS.error
   elseif line:match(icons.timer or "") then
     return HIGHLIGHTS.info
+  end
+
+  if agent_icons then
+    for _, icon in ipairs(agent_icons) do
+      if icon ~= "" and line:find(icon, 1, true) then return HIGHLIGHTS.agent end
+    end
   end
 
   return HIGHLIGHTS.default
@@ -61,9 +64,8 @@ end
 -- ============================================================================
 -- Virtual Line Rendering
 -- ============================================================================
-
 ---Render status as virtual lines at end of buffer
----@param args { bufnr: number, ns_id: number, text: string, icons?: table }
+---@param args { bufnr: number, ns_id: number, text: string, icons?: table, agent_icons?: string[] }
 function M.render(args)
   local bufnr = args.bufnr
   if not bufnr or not api.nvim_buf_is_valid(bufnr) then return end
@@ -72,7 +74,7 @@ function M.render(args)
   local virt_lines = { { { "", "Normal" } } }
 
   for _, line in ipairs(lines) do
-    local hl = M.detect_highlight(line, args.icons)
+    local hl = M.detect_highlight(line, args.icons, args.agent_icons)
     table.insert(virt_lines, { { line, hl } })
   end
 
