@@ -1,4 +1,3 @@
-local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
 local log = require("codecompanion.utils.log")
 local compat = require("codecompanion-extra.tools.compat")
 
@@ -27,6 +26,7 @@ local fmt = string.format
 ---@field answers table<string, string|string[]>
 ---@field current_index number Currently focused question (1-based)
 ---@field current_choice_index number Currently focused choice within a question (1-based)
+---@field hidden boolean Whether the form is currently hidden (windows closed but state preserved)
 ---@field callback function
 local AskUserForm = {}
 AskUserForm.__index = AskUserForm
@@ -47,6 +47,19 @@ local HL = {
 ---@type AskUserForm|nil
 local active_form = nil
 
+---Toggle visibility of the active ask_user form
+---@return boolean acted Whether a toggle action was performed
+local function toggle_form()
+  if not active_form then return false end
+
+  if active_form.hidden then
+    active_form:restore()
+  else
+    active_form:hide()
+  end
+  return true
+end
+
 ---Create a new AskUserForm instance
 ---@param args { questions: AskUserQuestion[], context?: string, callback: function }
 ---@return AskUserForm
@@ -60,6 +73,7 @@ function AskUserForm.new(args)
   self.current_choice_index = 1
   self.answers = {}
   self.line_map = {}
+  self.hidden = false
   self.ns_id = api.nvim_create_namespace("codecompanion_ask_user")
 
   for _, q in ipairs(self.questions) do
@@ -376,17 +390,20 @@ function AskUserForm:_set_winbar(items)
 end
 
 ---Set up the winbar with keymaps
+---@return nil
 function AskUserForm:_setup_winbar()
   self:_set_winbar({
     { keys = "j/k", desc = "Navigate" },
     { keys = "Enter/Space", desc = "Select" },
     { keys = "S", desc = "Submit" },
+    { keys = "H", desc = "Hide" },
     { keys = "R", desc = "Reject" },
     { keys = "q", desc = "Cancel" },
   })
 end
 
 ---Move to next question
+---@return nil
 function AskUserForm:next_question()
   self.current_index = (self.current_index % #self.questions) + 1
   self.current_choice_index = 1
@@ -394,6 +411,7 @@ function AskUserForm:next_question()
 end
 
 ---Move to previous question
+---@return nil
 function AskUserForm:prev_question()
   self.current_index = self.current_index - 1
   if self.current_index < 1 then self.current_index = #self.questions end
@@ -402,6 +420,7 @@ function AskUserForm:prev_question()
 end
 
 ---Move to next choice within current question
+---@return nil
 function AskUserForm:next_choice()
   local q = self.questions[self.current_index]
   if not q or not q.choices or #q.choices == 0 then return self:next_question() end
@@ -412,6 +431,7 @@ function AskUserForm:next_choice()
 end
 
 ---Move to previous choice within current question
+---@return nil
 function AskUserForm:prev_choice()
   local q = self.questions[self.current_index]
   if not q or not q.choices or #q.choices == 0 then return self:prev_question() end
@@ -428,6 +448,7 @@ function AskUserForm:prev_choice()
 end
 
 ---Handle text input for current question
+---@return nil
 function AskUserForm:handle_text_input()
   local q = self.questions[self.current_index]
   local current_answer = self.answers[q.id] or ""
@@ -448,6 +469,7 @@ function AskUserForm:handle_text_input()
 end
 
 ---Handle choice selection (single choice)
+---@return nil
 function AskUserForm:handle_choice_select()
   local q = self.questions[self.current_index]
   if not q.choices or #q.choices == 0 then return end
@@ -460,6 +482,7 @@ function AskUserForm:handle_choice_select()
 end
 
 ---Handle multi-choice toggle
+---@return nil
 function AskUserForm:handle_multi_choice_toggle()
   local q = self.questions[self.current_index]
   if not q.choices or #q.choices == 0 then return end
@@ -493,6 +516,7 @@ function AskUserForm:handle_multi_choice_toggle()
 end
 
 ---Handle enter/space key based on question type
+---@return nil
 function AskUserForm:handle_select()
   local q = self.questions[self.current_index]
 
@@ -526,6 +550,7 @@ function AskUserForm:validate()
 end
 
 ---Submit the form to the LLM
+---@return nil
 function AskUserForm:submit()
   local valid, missing = self:validate()
 
@@ -546,6 +571,7 @@ function AskUserForm:submit()
 end
 
 ---Close the form window and buffer
+---@return nil
 function AskUserForm:close()
   local winnr = self.winnr
   local bufnr = self.bufnr
@@ -570,7 +596,100 @@ function AskUserForm:close()
   if bufnr and api.nvim_buf_is_valid(bufnr) then api.nvim_buf_delete(bufnr, { force = true }) end
 end
 
+---Hide the form windows without destroying state
+---Windows are closed but buffers, answers, and navigation state are preserved
+---@return nil
+function AskUserForm:hide()
+  if self.hidden then return end
+  self.hidden = true
+
+  if self.context_winnr and api.nvim_win_is_valid(self.context_winnr) then
+    api.nvim_win_close(self.context_winnr, true)
+  end
+  self.context_winnr = nil
+
+  if self.winnr and api.nvim_win_is_valid(self.winnr) then api.nvim_win_close(self.winnr, true) end
+  self.winnr = nil
+
+  if self.context_bufnr and api.nvim_buf_is_valid(self.context_bufnr) then
+    api.nvim_buf_delete(self.context_bufnr, { force = true })
+  end
+  self.context_bufnr = nil
+
+  if self.bufnr and api.nvim_buf_is_valid(self.bufnr) then api.nvim_buf_delete(self.bufnr, { force = true }) end
+  self.bufnr = nil
+end
+
+---Restore a hidden form by re-creating windows and re-rendering
+---@return nil
+function AskUserForm:restore()
+  if not self.hidden then return end
+  self.hidden = false
+  self:_open()
+end
+
+---Open the form windows and setup UI
+---@return nil
+function AskUserForm:_open()
+  local cols, lines = vim.o.columns, vim.o.lines
+  self.width = math.min(90, math.floor(cols * 0.85))
+
+  local ctx_h = self:_get_context_height()
+  local total_h = math.min(30, math.floor(lines * 0.7))
+  self.height = ctx_h > 0 and math.max(10, total_h - ctx_h) or total_h
+
+  local tabline_h = vim.o.showtabline > 0 and 1 or 0
+  local ui_h = lines - (vim.o.cmdheight + (vim.o.laststatus > 0 and 1 or 0) + tabline_h)
+  local start_row = tabline_h + math.floor((ui_h - (ctx_h + self.height + (ctx_h > 0 and 2 or 0))) / 2) - 1
+  local col = math.floor((cols - self.width) / 2)
+
+  if self.context and ctx_h > 0 then
+    local ctx = self:_create_window({
+      name = "CodeCompanion_Context",
+      width = self.width,
+      height = ctx_h,
+      row = start_row,
+      col = col,
+      focusable = false,
+      border = "rounded",
+      title = " Context ",
+      title_pos = "center",
+      filetype = "markdown",
+      winhighlight = "FloatBorder:" .. HL.HEADER .. ",NormalFloat:Normal",
+    })
+    self.context_bufnr, self.context_winnr = ctx.bufnr, ctx.winnr
+  end
+
+  local q = self:_create_window({
+    name = "CodeCompanion_Questions",
+    width = self.width,
+    height = self.height,
+    row = ctx_h > 0 and (start_row + ctx_h + 2) or start_row,
+    col = col,
+    focusable = true,
+    border = "rounded",
+    title = " Questions ",
+    title_pos = "center",
+  })
+  self.bufnr, self.winnr = q.bufnr, q.winnr
+
+  self:_setup_keymaps()
+  self:_setup_winbar()
+  self:render()
+
+  api.nvim_create_autocmd("WinClosed", {
+    buffer = self.bufnr,
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        if active_form == self and not self.hidden then self:cancel() end
+      end)
+    end,
+  })
+end
+
 ---Cancel the form and notify callback
+---@return nil
 function AskUserForm:cancel()
   local callback = self.callback
 
@@ -584,6 +703,7 @@ end
 
 ---Reject the form with optional feedback
 ---@param reason? string Optional reason for rejection
+---@return nil
 function AskUserForm:reject(reason)
   local callback = self.callback
 
@@ -596,6 +716,7 @@ function AskUserForm:reject(reason)
 end
 
 ---Setup keymaps for the form buffer
+---@return nil
 function AskUserForm:_setup_keymaps()
   local opts = { buffer = self.bufnr, nowait = true, silent = true }
 
@@ -611,6 +732,7 @@ function AskUserForm:_setup_keymaps()
   vim.keymap.set("n", "q",       function() self:cancel() end,        opts)
   vim.keymap.set("n", "S",       function() self:submit() end,        opts)
   vim.keymap.set("n", "<C-s>",   function() self:submit() end,        opts)
+  vim.keymap.set("n", "H",       function() self:hide() end,          opts)
   -- stylua: ignore end
 
   vim.keymap.set("n", "R", function()
@@ -625,80 +747,11 @@ function AskUserForm:_setup_keymaps()
 end
 
 ---Show the form in a floating window
+---@return nil
 function AskUserForm:show()
   if active_form then active_form:close() end
-
-  self.width = math.min(90, math.floor(vim.o.columns * 0.85))
-
-  local context_height = self:_get_context_height()
-  local total_available = math.min(30, math.floor(vim.o.lines * 0.7))
-
-  local questions_height
-  if context_height > 0 then
-    questions_height = math.max(10, total_available - context_height)
-  else
-    questions_height = total_available
-  end
-
-  self.height = questions_height
-
-  local statusline_height = vim.o.laststatus > 0 and 1 or 0
-  local tabline_height = vim.o.showtabline > 0 and 1 or 0
-  local available_height = vim.o.lines - (vim.o.cmdheight + statusline_height + tabline_height)
-  local total_height = (context_height > 0 and context_height or 0) + questions_height
-  local start_row = tabline_height + math.floor((available_height - total_height) / 2) - 1
-  local col = math.floor((vim.o.columns - self.width) / 2)
-
-  if self.context and context_height > 0 then
-    local ctx = self:_create_window({
-      name = "CodeCompanion_Context",
-      width = self.width,
-      height = context_height,
-      row = start_row,
-      col = col,
-      focusable = false,
-      border = "rounded",
-      title = " Context ",
-      title_pos = "center",
-      filetype = "markdown",
-      winhighlight = "FloatBorder:" .. HL.HEADER .. ",NormalFloat:Normal",
-    })
-    self.context_bufnr = ctx.bufnr
-    self.context_winnr = ctx.winnr
-  end
-
-  -- Create questions window
-  local questions_row = context_height > 0 and (start_row + context_height + 2) or start_row
-
-  local questions = self:_create_window({
-    name = "CodeCompanion_Questions",
-    width = self.width,
-    height = questions_height,
-    row = questions_row,
-    col = col,
-    focusable = true,
-    border = "rounded",
-    title = " Questions ",
-    title_pos = "center",
-  })
-  self.bufnr = questions.bufnr
-  self.winnr = questions.winnr
-
   active_form = self
-
-  self:_setup_keymaps()
-  self:_setup_winbar()
-  self:render()
-
-  api.nvim_create_autocmd("WinClosed", {
-    buffer = self.bufnr,
-    once = true,
-    callback = function()
-      vim.schedule(function()
-        if active_form == self then self:cancel() end
-      end)
-    end,
-  })
+  self:_open()
 end
 
 ---Format answers for LLM consumption
@@ -727,6 +780,28 @@ local function format_answers_for_llm(questions, answers)
 
   return table.concat(parts, "\n\n")
 end
+
+---Setup chat buffer keymap for toggling the ask_user form
+---Called from agents/init.lua during setup
+---@return nil
+local function setup_chat_keymap()
+  local ok, cc_config = pcall(require, "codecompanion.config")
+  if not ok then return end
+
+  local keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
+  if not keymaps then return end
+
+  keymaps["toggle_ask_user"] = {
+    modes = { n = { "gH", "sq", "]q" } },
+    index = 55,
+    description = "[Ask] Toggle ask_user form",
+    callback = function()
+      if not toggle_form() then vim.notify("No active ask_user form", vim.log.levels.INFO) end
+    end,
+  }
+end
+
+setup_chat_keymap()
 
 ---@class CodeCompanion.Tool.AskUser: CodeCompanion.Tools.Tool
 return {
@@ -769,9 +844,13 @@ return {
                 data = formatted,
               })
             elseif result.status == "rejected" then
+              -- Route rejection as error through output_cb (matching insert_edit_into_file pattern).
+              -- The runner only recognizes "error" and "success" statuses — "rejected" falls
+              -- through to orchestrator:success() which incorrectly shows "Questions answered".
+              local reason = result.data or "User rejected the questions"
               output_handler({
-                status = "rejected",
-                data = result.data,
+                status = "error",
+                data = fmt("rejected: %s", reason),
               })
             else
               -- Cancelled or error
@@ -961,30 +1040,22 @@ The user has answered your questions. Use their responses to proceed with the ta
       local chat = meta.tools.chat
       local error_msg = vim.iter(stderr):flatten():join("\n")
 
-      if error_msg:match("[Cc]ancelled") then
+      if error_msg:match("^rejected:") then
+        local reason = error_msg:gsub("^rejected:%s*", "")
+        local llm_output = fmt(
+          'The user rejected the questions, with the reason: "%s". '
+            .. "Consider rephrasing, simplifying, or proceeding with reasonable defaults.",
+          reason
+        )
+        local user_output = "✗ Questions rejected"
+        chat:add_tool_output(self, llm_output, user_output)
+      elseif error_msg:match("[Cc]ancelled") then
         local llm_output =
           "The user cancelled the questions form. They may not want to answer right now. Consider proceeding with reasonable defaults or rephrasing your questions."
         local user_output = "✗ Questions cancelled"
         chat:add_tool_output(self, llm_output, user_output)
       else
         chat:add_tool_output(self, fmt("Error asking user questions: %s", error_msg))
-      end
-    end),
-
-    ---Rejection message back to the LLM
-    ---@param self CodeCompanion.Tools.Tool
-    ---@param meta table
-    ---@return nil
-    rejected = compat.output_rejected(function(self, meta)
-      local helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
-      local message = "The user rejected the questions"
-      if compat.is_new_api() then
-        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
-        opts.tools = meta.tools
-        helpers.rejected(self, opts)
-      else
-        local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
-        helpers.rejected(self, meta.tools, meta.cmd, opts)
       end
     end),
   },
