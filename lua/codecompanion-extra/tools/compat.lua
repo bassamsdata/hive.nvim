@@ -9,27 +9,35 @@ local M = {}
 local _is_new_api = nil ---@type boolean|nil
 local _detected_new_api = nil ---@type boolean|nil
 
---- Detect whether the running CodeCompanion uses the new (v19+) tool API.
+--- Detect whether the running CodeCompanion uses the new tool API.
+--- Uses structural detection: checks for the cmd_tool factory module
+--- which only exists in the new API. Falls back to version >= 19 check.
+--- Runtime detection from cmds() takes highest priority.
 ---@return boolean
 function M.is_new_api()
   if _detected_new_api ~= nil then return _detected_new_api end
   if _is_new_api ~= nil then return _is_new_api end
 
-  local ok, cc = pcall(require, "codecompanion")
-  if not ok or type(cc.version) ~= "function" then
-    _is_new_api = false
-    return false
+  -- Structural detection: cmd_tool factory only exists in new API
+  local ok = pcall(require, "codecompanion.interactions.chat.tools.builtin.cmd_tool")
+  if ok then
+    _is_new_api = true
+    return true
   end
 
-  local ver = cc.version()
-  if not ver then
-    _is_new_api = false
-    return false
+  -- Fallback: version-based detection
+  local cc_ok, cc = pcall(require, "codecompanion")
+  if cc_ok and type(cc.version) == "function" then
+    local ver = cc.version()
+    if ver then
+      local major = tonumber(ver:match("^(%d+)"))
+      _is_new_api = major ~= nil and major >= 19
+      return _is_new_api
+    end
   end
 
-  local major = tonumber(ver:match("^(%d+)"))
-  _is_new_api = major ~= nil and major >= 19
-  return _is_new_api
+  _is_new_api = false
+  return false
 end
 
 --- Wrap a `cmds` function.
@@ -147,7 +155,7 @@ end
 
 --- Wrap a `handlers.on_exit` callback.
 --- NEW: `function(self, meta)` — meta = { tools }
---- OLD: `function(tools)` — note: NO self in old API
+--- OLD: `function(self, tools)`
 ---@param fn fun(self_or_tools: table, meta: table|nil)
 ---@return fun(...)
 function M.handler_on_exit(fn)
@@ -155,7 +163,7 @@ function M.handler_on_exit(fn)
     if M.is_new_api() then
       return fn(arg1, arg2 or {})
     else
-      return fn(arg1, { tools = arg1 })
+      return fn(arg1, { tools = arg2 })
     end
   end
 end

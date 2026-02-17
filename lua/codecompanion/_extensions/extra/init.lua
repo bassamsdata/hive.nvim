@@ -77,8 +77,11 @@ function M._register_tools()
     if config.enabled ~= false and tools_module.tools[name] then
       local tool_def = tools_module.get(name)
       if tool_def then
+        local tool_name = name
         chat_tools[name] = {
-          callback = tool_def,
+          callback = function()
+            return tools_module.get(tool_name)
+          end,
           description = tool_def.schema and tool_def.schema["function"] and tool_def.schema["function"].description
             or "Tool from codecompanion-extra",
           opts = config.opts or tool_def.opts or {},
