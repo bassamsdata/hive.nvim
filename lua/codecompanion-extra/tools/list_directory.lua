@@ -20,16 +20,12 @@ local function list_dir(args, opts)
 
   if not path or path == "" then path = "." end
 
-  local cwd = vim.fn.getcwd()
   local full_path
-
-  if vim.fn.fnamemodify(path, ":p") == path then
-    full_path = path
+  if path:sub(1, 1) == "/" or path:sub(1, 1) == "~" or path:match("^%a:") then
+    full_path = vim.fs.normalize(path)
   else
-    full_path = vim.fs.joinpath(cwd, path)
+    full_path = vim.fs.normalize(vim.fs.joinpath(vim.fn.getcwd(), path))
   end
-
-  full_path = vim.fs.normalize(full_path)
 
   local stat = vim.uv.fs_stat(full_path)
   if not stat then return {
