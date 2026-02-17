@@ -39,6 +39,12 @@ function M.setup(config)
     M._agents = vim.tbl_deep_extend("force", M._agents, default_loaded)
   end
 
+  if M._config.load_cwd_agents ~= false then
+    local cwd_agents_dir = vim.fs.joinpath(vim.fn.getcwd(), ".codecompanion", "agents")
+    local cwd_loaded = markdown.load_from_dir(cwd_agents_dir)
+    M._agents = vim.tbl_deep_extend("force", M._agents, cwd_loaded)
+  end
+
   if M._config.load_from_dir then
     local loaded = markdown.load_from_dir(M._config.load_from_dir)
     M._agents = vim.tbl_deep_extend("force", M._agents, loaded)
@@ -46,10 +52,12 @@ function M.setup(config)
 
   M._register_agent_groups()
   M._setup_keymap()
-  M._setup_todo_keymap()
   M._setup_navigation()
   M._setup_chat_events()
   M._register_extra_tools()
+  M._setup_todo_keymap()
+  M._setup_model_picker()
+  M._setup_debug_keymap()
 end
 
 ---Register each agent as a tool group in codecompanion config
@@ -114,7 +122,9 @@ end
 ---@private
 function M._setup_keymap()
   local keymap_config = M._config.keymap or {}
-  local switch_key = keymap_config.switch or { n = "gO" }
+  local switch_key = keymap_config.switch
+
+  if not switch_key then return end
 
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
@@ -130,6 +140,18 @@ function M._setup_keymap()
       M._switch_agent(chat)
     end,
   }
+
+  local cycle_key = keymap_config.cycle
+  if cycle_key then
+    chat_keymaps["agent_cycle"] = {
+      modes = cycle_key,
+      index = 51,
+      description = "[Agent] Cycle to next agent",
+      callback = function(chat)
+        M._cycle_agent(chat)
+      end,
+    }
+  end
 end
 
 ---Setup navigation keymaps
@@ -139,11 +161,58 @@ function M._setup_navigation()
   navigation.setup()
 end
 
+---Override debug keymap to inject agent name into the debug window
+---@private
+function M._setup_debug_keymap()
+  local ok, cc_config = pcall(require, "codecompanion.config")
+  if not ok then return end
+
+  local chat_keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
+  if not chat_keymaps or not chat_keymaps["debug"] then return end
+
+  chat_keymaps["debug"].callback = function(chat)
+    local settings, messages = chat:debug()
+    if not settings and not messages then return end
+
+    local debug_mod = require("codecompanion.interactions.chat.debug")
+    local debug_instance = debug_mod.new({ chat = chat, settings = settings })
+    debug_instance:render()
+
+    if not debug_instance.bufnr or not vim.api.nvim_buf_is_valid(debug_instance.bufnr) then return end
+
+    local agent_name = M._chat_agents[chat.bufnr]
+    if not agent_name then return end
+
+    local lines = vim.api.nvim_buf_get_lines(debug_instance.bufnr, 0, -1, false)
+    local insert_idx
+    for i, line in ipairs(lines) do
+      if line:match("^%-%- Buffer Number:") then
+        insert_idx = i
+        break
+      end
+    end
+
+    if insert_idx then
+      local agent_def = M._agents[agent_name]
+      local agent_line = '-- Agent: "' .. agent_name .. '"'
+      if agent_def and agent_def.description then agent_line = agent_line .. " (" .. agent_def.description .. ")" end
+      vim.api.nvim_buf_set_lines(debug_instance.bufnr, insert_idx, insert_idx, false, { agent_line })
+    end
+  end
+end
+
 ---Setup todo viewer keymap
 ---@private
 function M._setup_todo_keymap()
   local todo = require("codecompanion-extra.tools.todo")
-  todo.setup_keymap("gT")
+  todo.setup_keymap({ n = { "gT", "st", "]t" } })
+end
+
+---Setup model picker keymap for subagent small/big model assignment
+---@private
+function M._setup_model_picker()
+  local model_picker = require("codecompanion-extra.tools.subagent.model_picker")
+  model_picker.setup()
 end
 
 ---Register extra tools (task, ask_user, skill) globally
@@ -306,6 +375,37 @@ function M._switch_agent(chat)
   }, function(choice)
     if choice then M.activate(choice.name, chat) end
   end)
+end
+
+---Cycle to the next primary agent in sorted order
+---@param chat table
+function M._cycle_agent(chat)
+  local primary_agents = {}
+  for name, agent in pairs(M._agents) do
+    if agent.type == "agent" then table.insert(primary_agents, name) end
+  end
+
+  table.sort(primary_agents)
+
+  local count = #primary_agents
+  if count == 0 then
+    vim.notify("No agents defined", vim.log.levels.WARN)
+    return
+  end
+
+  local current = M._chat_agents[chat.bufnr]
+  local next_idx = 1
+
+  if current then
+    for i, name in ipairs(primary_agents) do
+      if name == current then
+        next_idx = (i % count) + 1
+        break
+      end
+    end
+  end
+
+  M.activate(primary_agents[next_idx], chat)
 end
 
 ---Get an agent definition
