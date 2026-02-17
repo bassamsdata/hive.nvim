@@ -67,6 +67,7 @@ local M = {}
 ---@field adapter? string
 ---@field model? string
 ---@field provider? string
+---@field interaction? "inline"|"cmd" The interaction type (inline or cmd)
 ---@field bufnr? number The code buffer being modified
 ---@field completion_timer? uv.uv_timer_t
 
@@ -463,6 +464,7 @@ function StateManager._create_inline_state()
     adapter = nil,
     model = nil,
     provider = nil,
+    interaction = nil,
     bufnr = nil,
     completion_timer = nil,
   }
@@ -486,7 +488,8 @@ end
 
 ---@param bufnr? number The code buffer being modified
 ---@param adapter? table Adapter info from the event data
-function StateManager:on_inline_started(bufnr, adapter)
+---@param interaction? "inline"|"cmd" The interaction type
+function StateManager:on_inline_started(bufnr, adapter, interaction)
   M.debug_log("on_inline_started called, bufnr=" .. tostring(bufnr))
 
   -- Cancel any previous inline completion timer
@@ -497,6 +500,7 @@ function StateManager:on_inline_started(bufnr, adapter)
   self.inline.started_at = vim.uv.now()
   self.inline.completed_at = nil
   self.inline.duration_ms = nil
+  self.inline.interaction = interaction or "inline"
   self.inline.bufnr = bufnr
 
   if adapter then
@@ -679,6 +683,7 @@ function StateManager:get_view()
       adapter = self.inline.adapter,
       model = self.inline.model,
       provider = self.inline.provider,
+      interaction = self.inline.interaction,
       bufnr = self.inline.bufnr,
     },
   }

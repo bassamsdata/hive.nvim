@@ -255,7 +255,7 @@ end
 ---@return boolean
 function Spinner:_is_inline_request_event(args)
   local data = args.data or {}
-  return data.interaction == "inline"
+  return data.interaction == "inline" or data.interaction == "cmd"
 end
 
 ---@param args table
@@ -472,7 +472,8 @@ function Spinner:_build_inline_line(inline)
     end
   end
 
-  table.insert(chunks, { " (inline)", "SpinnerDim" })
+  local interaction_label = inline.interaction == "cmd" and "(cmd)" or "(inline)"
+  table.insert(chunks, { " " .. interaction_label, "SpinnerDim" })
 
   return chunks
 end
@@ -832,24 +833,56 @@ function M.setup(user_config)
 
       if event_bufnr and _spinner_instance:_is_child_bufnr(event_bufnr) then return end
 
-      if data.interaction == "inline" then
-        -- Inline interaction: route to inline state
+      if data.interaction == "inline" or data.interaction == "cmd" then
+        -- Inline and cmd interactions share the same lifecycle (one-shot, no tools)
         if args.match == "CodeCompanionRequestStarted" then
-          manager:on_inline_started(event_bufnr, data.adapter)
+          manager:on_inline_started(event_bufnr, data.adapter, data.interaction)
+          debug(
+            string.format(
+              "event: CodeCompanionRequestStarted [%s] -> on_inline_started(bufnr=%s, adapter=%s, interaction=%s)",
+              data.interaction,
+              tostring(event_bufnr),
+              tostring(data.adapter),
+              tostring(data.interaction)
+            )
+          )
         elseif args.match == "CodeCompanionRequestFinished" then
           manager:on_inline_finished(data.status == "error" and "error" or nil)
+          debug(string.format("event: CodeCompanionRequestFinished [%s] -> on_inline_finished()", data.interaction))
         end
         -- No streaming for inline — intentionally no handler
-      else
-        -- Chat interaction (default)
+      elseif event_bufnr then
+        -- Chat interaction — only process when bufnr is present
+        -- Internal HTTP requests (e.g. web_search adapter calls) fire RequestStarted
+        -- without bufnr; those are not real chat interactions and must be skipped.
         if args.match == "CodeCompanionRequestStarted" then
           manager:on_request_started(event_bufnr, data.id)
           if data.adapter then manager:on_chat_adapter(event_bufnr, data.adapter) end
+          debug(
+            string.format(
+              "event: CodeCompanionRequestStarted [chat] -> on_request_started(bufnr=%s, id=%s)",
+              tostring(event_bufnr),
+              tostring(data.id)
+            )
+          )
         elseif args.match == "CodeCompanionRequestStreaming" then
           manager:on_request_streaming(event_bufnr)
           if data.adapter then manager:on_chat_adapter(event_bufnr, data.adapter) end
+          debug(
+            string.format(
+              "event: CodeCompanionRequestStreaming [chat] -> on_request_streaming(bufnr=%s)",
+              tostring(event_bufnr)
+            )
+          )
         elseif args.match == "CodeCompanionRequestFinished" then
           manager:on_request_finished(event_bufnr, data.status or "unknown")
+          debug(
+            string.format(
+              "event: CodeCompanionRequestFinished [chat] -> on_request_finished(bufnr=%s, status=%s)",
+              tostring(event_bufnr),
+              data.status or "unknown"
+            )
+          )
         end
       end
 
