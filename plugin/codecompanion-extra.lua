@@ -225,6 +225,106 @@ local subcommands = {
       navigation.keymaps.list_subagents(chat)
     end,
   },
+
+  ---Configure models for subagents and advisors
+  ---Usage: :CCExtra model              (show current config)
+  ---       :CCExtra model small <spec> (set small model)
+  ---       :CCExtra model big <spec>   (set big model)
+  ---       :CCExtra model clear        (clear overrides, inherit from parent)
+  ---Model spec format: "adapter/model" or "adapter/provider/model"
+  model = {
+    impl = function(args)
+      local extra = require("codecompanion-extra")
+      if not extra.is_initialized() then extra.setup() end
+
+      local config_module = require("codecompanion-extra.config")
+      local models = require("codecompanion-extra.tools.subagent.models")
+      local type_arg = args[1]
+
+      -- No args: show current configuration
+      if not type_arg then
+        local small = models.get_model("small")
+        local big = models.get_model("big")
+        local config = config_module.get()
+
+        local lines = { "Model Configuration:" }
+        table.insert(lines, "")
+
+        local small_source = vim.g.EXTRA_SMALL_MODEL and "vim.g"
+          or (config.agents.small_model and "config" or "inherit")
+        if small then
+          table.insert(
+            lines,
+            string.format("  small (subagents): %s/%s [%s]", small.adapter, small.model, small_source)
+          )
+        else
+          table.insert(lines, "  small (subagents): (inherits from parent chat)")
+        end
+
+        local big_source = vim.g.EXTRA_BIG_MODEL and "vim.g" or (config.agents.big_model and "config" or "inherit")
+        if big then
+          table.insert(lines, string.format("  big (advisors):    %s/%s [%s]", big.adapter, big.model, big_source))
+        else
+          table.insert(lines, "  big (advisors):    (inherits from parent chat)")
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, "Usage:")
+        table.insert(lines, "  :CCExtra model small openai/gpt-4o-mini")
+        table.insert(lines, "  :CCExtra model big openai/gpt-4o")
+        table.insert(lines, "  :CCExtra model big openrouter/openai/gpt-4o")
+        table.insert(lines, "  :CCExtra model clear")
+
+        vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+        return
+      end
+
+      -- Clear overrides
+      if type_arg == "clear" then
+        vim.g.EXTRA_SMALL_MODEL = nil
+        vim.g.EXTRA_BIG_MODEL = nil
+        vim.notify("Model overrides cleared (will inherit from parent chat)", vim.log.levels.INFO)
+        return
+      end
+
+      -- Set model
+      if type_arg ~= "small" and type_arg ~= "big" then
+        vim.notify("Usage: :CCExtra model <small|big|clear> [adapter/model]", vim.log.levels.ERROR)
+        return
+      end
+
+      local model_spec = args[2]
+      if not model_spec or model_spec == "" then
+        -- Interactive: clear the override for this type
+        local var_name = "EXTRA_" .. type_arg:upper() .. "_MODEL"
+        vim.g[var_name] = nil
+        vim.notify(
+          string.format("%s model override cleared (will inherit from parent chat)", type_arg),
+          vim.log.levels.INFO
+        )
+        return
+      end
+
+      -- Validate the spec parses correctly
+      local parsed = models.parse_model_string(model_spec)
+      if not parsed then
+        vim.notify('Invalid model format. Use "adapter/model" or "adapter/provider/model"', vim.log.levels.ERROR)
+        return
+      end
+
+      local var_name = "EXTRA_" .. type_arg:upper() .. "_MODEL"
+      vim.g[var_name] = model_spec
+      vim.notify(
+        string.format("%s model set: %s (adapter=%s, model=%s)", type_arg, model_spec, parsed.adapter, parsed.model),
+        vim.log.levels.INFO
+      )
+    end,
+    complete = function(subcmd_arg_lead)
+      local parts = vim.split(subcmd_arg_lead or "", "%s+")
+      if #parts <= 1 then return { "small", "big", "clear" } end
+      return {}
+    end,
+  },
 }
 
 ---Main CCExtra command handler

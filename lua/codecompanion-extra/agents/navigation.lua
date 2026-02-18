@@ -43,12 +43,18 @@ local function build_winbar(bufnr)
     })[session.status] or "Normal"
 
     local type_label = session.agent_type == "subagent" and "Subagent" or "Agent"
-    table.insert(parts, fmt("%%#%s#%s: %s%%*", status_hl, type_label, session.agent_name))
+    local name_part = fmt("%%#%s#%s:%%* %%#CCExtraAgentName#%s%%*", status_hl, type_label, session.agent_name)
+
+    if session.agent_type == "subagent" and session.description and session.description ~= "" then
+      name_part = name_part .. fmt(" %%#Comment#(%s)%%*", session.description)
+    end
+
+    table.insert(parts, name_part)
 
     local children = hierarchy.get_children(bufnr)
     if #children > 0 then table.insert(parts, fmt("%%#Comment#↓ %d subagents%%*", #children)) end
   elseif agent_name then
-    table.insert(parts, fmt("Agent: %s", agent_name))
+    table.insert(parts, fmt("Agent: %%#CCExtraAgentName#%s%%*", agent_name))
   end
 
   if #parts == 0 then return nil end
@@ -156,7 +162,7 @@ function M.setup()
   if not keymaps then return end
 
   keymaps["next_subagent"] = {
-    modes = { n = "]s" },
+    modes = { n = { "]s", "sn" } },
     index = 60,
     callback = function(chat)
       M.keymaps.next_subagent(chat)
@@ -165,7 +171,7 @@ function M.setup()
   }
 
   keymaps["prev_subagent"] = {
-    modes = { n = "[s" },
+    modes = { n = { "[s", "sp" } },
     index = 61,
     callback = function(chat)
       M.keymaps.prev_subagent(chat)
@@ -183,7 +189,7 @@ function M.setup()
   }
 
   keymaps["list_subagents"] = {
-    modes = { n = "]S" },
+    modes = { n = { "]S", "]l", "sl" } },
     index = 63,
     callback = function(chat)
       M.keymaps.list_subagents(chat)

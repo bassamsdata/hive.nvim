@@ -7,11 +7,21 @@ local M = {}
 ---@field tools table<string, { enabled: boolean, opts?: table }> Tool configurations
 ---@field agents CodeCompanionExtra.AgentsConfig Agent system configuration
 ---@field skills CodeCompanionExtra.SkillsConfig Skills system configuration
+---@field sys_notify CodeCompanionExtra.SysNotifyConfig System notification configuration
+---@field context_pruning? table Context pruning configuration
+
+---@class CodeCompanionExtra.SysNotifyConfig
+---@field enabled boolean Enable system notifications
+---@field only_when_unfocused boolean Only show notifications when Neovim is unfocused
+---@field notify_on table<string, boolean> Which events to notify on (e.g., completed
+---@field title string Notification title
+---@field fallback boolean Whether to fallback to vim.notify if system notifications fail
 
 ---@class CodeCompanionExtra.AgentsConfig
----@field keymap? { switch?: table<string, string> } Keymap configuration
+---@field keymap? { switch?: table<string, string|string[]> } Keymap configuration
 ---@field definitions? table<string, CodeCompanionExtra.Agent> Custom agent definitions
 ---@field load_from_dir? string Directory to load agents from markdown files
+---@field load_cwd_agents? boolean Load agents from .codecompanion/agents under current working directory
 ---@field small_model? string Model for subagents. Format: "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.EXTRA_SMALL_MODEL
 ---@field big_model? string Model for consultant agents. Format: "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.EXTRA_BIG_MODEL
 
@@ -30,11 +40,12 @@ M.defaults = {
     tools = { enabled = true },
     agents = { enabled = true },
     skills = { enabled = true },
+    context_pruning = { enabled = true },
   },
 
   spinner = {
     spinner = {
-      frames = "simple_pounce",
+      frames = "moon",
       interval = 80,
     },
     display = {
@@ -97,9 +108,12 @@ M.defaults = {
 
   agents = {
     -- Keymap for agent switching (toggles if 2 agents, select if more)
+    -- Cycle keymap cycles through agents in sorted order (wraps around)
     keymap = {
-      switch = { n = "gO" },
+      switch = { n = { "gO", "sa", "]a" } },
+      cycle = { n = { "<Tab>" } },
       -- Navigation keymaps are registered automatically:
+
       -- ]s - next subagent
       -- [s - prev subagent
       -- ]p - parent agent
@@ -112,15 +126,25 @@ M.defaults = {
     --   "openrouter/openai/gpt-4o"    -> adapter: openrouter, model: openai/gpt-4o
     -- If nil, agents inherit adapter/model from parent chat.
     -- Can be overridden at runtime via vim.g.EXTRA_SMALL_MODEL or vim.g.EXTRA_BIG_MODEL
+    -- Or interactively via :CCExtra model small/big <spec>
     small_model = nil,
     big_model = nil,
+
+    -- Model patterns that trigger a confirmation dialog before spawning subagents.
+    -- Prevents accidental high-cost usage when parent chat uses an expensive model.
+    -- Patterns are glob-like: * matches any chars, ? matches single char.
+    -- Formats:
+    --   "adapter/model*" - match specific adapter (e.g., "copilot/gpt*")
+    --   "model*" - match any adapter with this model (e.g., "claude-opus*")
+    --   "*/model*" - explicitly match any adapter
+    confirm_expensive_models = { "claude-opus*" },
 
     -- Override built-in agents or add custom ones
     -- Built-in agents: build, plan (primary), explorer, general, analyzer (subagents)
     definitions = {},
 
-    -- Load agents from markdown directory
     load_from_dir = nil,
+    load_cwd_agents = true,
   },
 
   skills = {
@@ -134,40 +158,14 @@ M.defaults = {
     -- Scan subdirectories recursively (opt-in)
     recursive = false,
   },
+
+  context_pruning = {
+    protected_tools = { "prune", "task", "todowrite", "todoread", "consult", "ask_user" },
+  },
 }
 
 ---@type CodeCompanionExtra.Config
 M.config = vim.deepcopy(M.defaults)
-
----Parse model string in format "adapter/model" or "adapter/provider/model"
----@param model_str string|nil The model string to parse
----@return { adapter: string, model: string }|nil Parsed adapter and model, or nil if invalid
-function M.parse_model_string(model_str)
-  if not model_str or model_str == "" then return nil end
-
-  local parts = vim.split(model_str, "/", { plain = true })
-  if #parts == 2 then
-    -- Format: "openai/gpt-4o-mini" -> adapter: openai, model: gpt-4o-mini
-    return { adapter = parts[1], model = parts[2] }
-  elseif #parts >= 3 then
-    -- Format: "openrouter/openai/gpt-4o" -> adapter: openrouter, model: openai/gpt-4o
-    return { adapter = parts[1], model = table.concat(vim.list_slice(parts, 2), "/") }
-  end
-
-  return nil
-end
-
----Get model configuration for agents (big or small)
----Priority: vim.g.EXTRA_{TYPE}_MODEL > vim.g.extra_{type}_model > config.agents.{type}_model > nil
----@param type "small"|"big"
----@return { adapter: string, model: string }|nil
-function M.get_model(type)
-  local model = vim.g["EXTRA_" .. type:upper() .. "_MODEL"]
-    or vim.g["extra_" .. type .. "_model"]
-    or (M.config.agents and M.config.agents[type .. "_model"])
-
-  return M.parse_model_string(model)
-end
 
 ---Merge user config with defaults
 ---@param user_opts table?

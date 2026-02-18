@@ -185,6 +185,10 @@ function M.set_status(bufnr, status, result)
     session.completed_at = os.time()
     if session.started_at then session.duration_ms = math.floor((vim.loop.hrtime() - session.started_at) / 1000000) end
   end
+
+  local navigation = require("codecompanion-extra.agents.navigation")
+  navigation.refresh_winbar(bufnr)
+  if session.parent_bufnr then navigation.refresh_winbar(session.parent_bufnr) end
 end
 
 ---Record tool start

@@ -19,11 +19,32 @@ local M = {}
 function M.get_adapter_params(args)
   local parent_chat = args.parent_chat
   local model_type = args.model_type or "small"
-  local extra_config = require("codecompanion-extra.config")
+  local models = require("codecompanion-extra.tools.subagent.models")
 
-  local model = extra_config.get_model(model_type)
+  local model = models.get_model(model_type)
   if model then
     log:debug("[Lifecycle] Using %s_model: adapter=%s, model=%s", model_type, model.adapter, model.model)
+
+    if models.is_expensive_model(model.adapter, model.model) then
+      log:warn(
+        "[Lifecycle] Expensive model configured for %s_model: %s/%s. Consider setting a cheaper model via :CCExtra model %s <spec>",
+        model_type,
+        model.adapter,
+        model.model,
+        model_type
+      )
+      vim.schedule(function()
+        vim.notify(
+          fmt(
+            "⚠️ Subagent using expensive model: %s/%s\nSet a cheaper model: :CCExtra model %s <adapter/model>",
+            model.adapter,
+            model.model,
+            model_type
+          ),
+          vim.log.levels.WARN
+        )
+      end)
+    end
 
     return {
       adapter = model.adapter,
@@ -40,6 +61,28 @@ function M.get_adapter_params(args)
 
     if adapter_name then
       log:debug("[Lifecycle] Inheriting from parent: adapter=%s, model=%s", adapter_name, model_name or "default")
+
+      if models.is_expensive_model(adapter_name, model_name) then
+        log:warn(
+          "[Lifecycle] Expensive model detected for %s_model: %s/%s. Consider setting a cheaper model via :CCExtra model %s <spec>",
+          model_type,
+          adapter_name,
+          model_name or "default",
+          model_type
+        )
+        vim.schedule(function()
+          vim.notify(
+            fmt(
+              "⚠️ Subagent inheriting expensive model: %s/%s\nSet a cheaper model: :CCExtra model %s <adapter/model>",
+              adapter_name,
+              model_name or "default",
+              model_type
+            ),
+            vim.log.levels.WARN
+          )
+        end)
+      end
+
       return {
         adapter = adapter_name,
         model = model_name,
@@ -104,6 +147,11 @@ function M.create_hierarchy_session(args)
     description = args.description or "",
     hidden = args.hidden ~= false,
   })
+
+  if args.parent_bufnr then
+    local navigation = require("codecompanion-extra.agents.navigation")
+    navigation.refresh_winbar(args.parent_bufnr)
+  end
 end
 
 ---Activate agent, add prompt message, and submit
