@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.4.0](https://github.com/bassamsdata/codecompanion-extra.nvim/compare/v1.3.0...v1.4.0) (2026-02-18)
+
+
+### Features
+
+* **agents:** add cycle agents keymap and some fixes. ([4dae14c](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/4dae14c498466a0df9bf9c9d2c85fa9ac4ca5c29))
+* **ask_user:** ability to hide questions UI and restore it back ([a4c66c0](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/a4c66c0595f3466864864685ec2ded031aa0da6b))
+* **cmd_runner:** migrate CC cmd_runner and introduce enhancements ([872998b](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/872998bc81fb9dc4b0df1aeb7e1f29992ab9875b))
+* **spinner:** Add interaction CMD to the state ([b7f0f1e](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/b7f0f1e5c39cb914d0d50f51fcf668c0491f9644))
+
+
+### Bug Fixes
+
+* **ask_user:** fix system prompt and highlights ([3f4d7ec](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/3f4d7ec0db4333a53ee4bcaa6725f2ade7062b9e))
+* **list_directory:** fix listing outside CWD ([5aae283](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/5aae283c7f9ac9565be21e0434fe8158cb6abf9d))
+* **lua_workflow:** delete the file corrupting `lazydev` plugin ([b02ca96](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/b02ca9640d8ff5f3e6fe2e87dc181c7b072b2f6d))
+* **tools:** adapt to the new changes in develop ([4ff6433](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/4ff64330a15378a90686ec3b6658a3d7f94c8b45))
+* **tools:** fix compatibility layer temporarily since it's still evolving ([9a4c0ee](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/9a4c0ee7248feb8b8318fad71bf56f253124dede))
+* **tools:** fix status highlights ([6aa8c7b](https://github.com/bassamsdata/codecompanion-extra.nvim/commit/6aa8c7bfafd492c9da6aa45f5d51248b2a8db178))
+
 ## [1.3.0](https://github.com/bassamsdata/codecompanion-extra.nvim/compare/v1.2.0...v1.3.0) (2026-02-12)
 
 
