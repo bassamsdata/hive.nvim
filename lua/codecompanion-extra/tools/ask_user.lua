@@ -342,7 +342,7 @@ function AskUserForm:render()
     ---@type integer, integer, integer, string
     local line, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
     if col_end == -1 then col_end = #lines[line + 1] end
-    pcall(api.nvim_buf_add_highlight, self.bufnr, self.ns_id, hl_group, line, col_start, col_end)
+    pcall(api.nvim_buf_set_extmark, self.bufnr, self.ns_id, line, col_start, { end_col = col_end, hl_group = hl_group })
   end
 
   -- Render context in separate buffer if it exists
@@ -364,7 +364,14 @@ function AskUserForm:render()
     for _, hl in ipairs(ctx_highlights) do
       local line, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
       if col_end == -1 then col_end = #ctx_lines[line + 1] end
-      pcall(api.nvim_buf_add_highlight, self.context_bufnr, ctx_ns_id, hl_group, line, col_start, col_end)
+      pcall(
+        api.nvim_buf_set_extmark,
+        self.context_bufnr,
+        ctx_ns_id,
+        line,
+        col_start,
+        { end_col = col_end, hl_group = hl_group }
+      )
     end
   end
 
@@ -990,7 +997,25 @@ WHEN TO USE:
 - Before large refactors: Ask about scope, priorities, constraints
 - Ambiguous requests: Clarify what exactly the user wants
 - Multiple valid approaches: Let user choose their preference
-- Missing context: Ask for information you need]],
+- Missing context: Ask for information you need
+
+CRITICAL RULE: NEVER end your response just to ask the user a question. If you need clarification, preferences, or confirmation from the user, you MUST use the `ask_user` tool. Do NOT write questions in your chat message and stop — the user cannot reply inline. The `ask_user` tool creates an interactive form that the user can fill out, and you will receive their responses to continue working.
+
+Examples of when you MUST use `ask_user` instead of just asking in chat:
+- "Which approach do you prefer?" → Use ask_user with choice type
+- "Should I also update the tests?" → Use ask_user with choice type
+- "What name would you like for this?" → Use ask_user with text type
+- "Before I proceed, I need to know..." → Use ask_user with appropriate types
+
+The user will see all questions in a form and can answer them. You'll receive their responses to continue.
+
+GUIDELINES:
+- Keep questions concise and clear
+- Use choice/multi_choice when you can anticipate options
+- Use text for open-ended questions (with empty choices array)
+- Mark truly essential questions as required
+- Provide helpful context so user understands why you're asking
+- Don't ask too many questions at once (3-5 is ideal)]],
   handlers = {
     ---Setup handler called before tool execution
     ---@param self CodeCompanion.Tools.Tool
