@@ -4,7 +4,7 @@ CC_BRANCH ?= main
 
 test: deps/mini.nvim
 	@echo "Running tests..."
-	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run({'tests/test_skills_discovery.lua'})"
+	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run()"
 
 test-compat: deps/mini.nvim deps/plenary.nvim
 	@rm -rf deps/codecompanion.nvim
