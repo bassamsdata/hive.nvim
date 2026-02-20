@@ -17,9 +17,15 @@ function M.detect_highlight(line, icons, agent_icons)
   local HIGHLIGHTS = utils.HIGHLIGHTS
   icons = icons or utils.STATUS_ICONS
 
-  if line:match("^───") then
-    return HIGHLIGHTS.header
-  elseif line:match("Running") or line:match("Working") or line:match("Starting") then
+  if line:match("^───") then return HIGHLIGHTS.header end
+
+  if agent_icons then
+    for _, icon in ipairs(agent_icons) do
+      if icon ~= "" and line:find(icon, 1, true) then return HIGHLIGHTS.agent end
+    end
+  end
+
+  if line:match("Running") or line:match("Working") or line:match("Starting") then
     return HIGHLIGHTS.running
   elseif line:match("Done") or line:match("Complete") or line:match(icons.completed or "✓") then
     return HIGHLIGHTS.success
@@ -27,12 +33,6 @@ function M.detect_highlight(line, icons, agent_icons)
     return HIGHLIGHTS.error
   elseif line:match(icons.timer or "") then
     return HIGHLIGHTS.info
-  end
-
-  if agent_icons then
-    for _, icon in ipairs(agent_icons) do
-      if icon ~= "" and line:find(icon, 1, true) then return HIGHLIGHTS.agent end
-    end
   end
 
   return HIGHLIGHTS.default
