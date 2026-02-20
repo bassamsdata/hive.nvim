@@ -151,7 +151,7 @@ local function build_status_text(state, spinner_char)
     lines,
     fmt("─────── %s %s Consultation ───────", info.icon, info.display_name)
   )
-  table.insert(lines, fmt("  %s %s", utils.STATUS_ICONS.tools, state.description))
+  table.insert(lines, fmt("  %s %s", info.icon, state.description))
 
   if state.status == "running" then
     local tool_info = state.tool_count > 0 and fmt(" | ToolCalls: %d", state.tool_count) or ""
@@ -183,12 +183,14 @@ local function render_status(state)
   local spinner_idx = math.floor((vim.uv.hrtime() - state.start_time) / 100000000) % #subagent.utils.SPINNER_FRAMES + 1
   local spinner_char = subagent.utils.SPINNER_FRAMES[spinner_idx]
 
+  local info = get_advisor_info(state.advisor_type)
   local status_text = build_status_text(state, spinner_char)
   subagent.status.render({
     bufnr = state.parent_bufnr,
     ns_id = state.ns_id,
     text = status_text,
     icons = subagent.utils.STATUS_ICONS,
+    agent_icons = { info.icon },
   })
 end
 
@@ -793,7 +795,7 @@ Unlike task delegation (for work completion), consult is for getting expert opin
 
       local user_lines = {
         fmt("───── **%s %s Consultation Complete** ─────", info.icon, info.display_name),
-        fmt("  %s %s", ICONS.thinking, description),
+        fmt("  %s %s", info.icon, description),
       }
       if tool_count > 0 then
         table.insert(user_lines, fmt("  **%s ToolCalls:** %d", subagent.utils.STATUS_ICONS.tools, tool_count))
