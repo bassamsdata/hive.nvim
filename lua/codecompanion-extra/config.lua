@@ -24,6 +24,7 @@ local M = {}
 ---@field load_cwd_agents? boolean Load agents from .codecompanion/agents under current working directory
 ---@field small_model? string Model for subagents. Format: "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.EXTRA_SMALL_MODEL
 ---@field big_model? string Model for consultant agents. Format: "adapter/model" or "adapter/provider/model". If nil, inherits from parent chat. Can be overridden by vim.g.EXTRA_BIG_MODEL
+---@field model_prompts? table<string, table<string, string|fun(chat: table): string>> Per-agent model-specific system prompts. Outer key is agent name, inner key is model substring.
 
 ---@class CodeCompanionExtra.SkillsConfig
 ---@field enabled boolean Enable skills support
@@ -144,6 +145,21 @@ M.defaults = {
     -- Override built-in agents or add custom ones
     -- Built-in agents: build, plan (primary), explorer, general, analyzer (subagents)
     definitions = {},
+
+    -- Model-specific system prompts per agent.
+    -- When the chat uses a model matching a substring key, the corresponding prompt
+    -- completely replaces the agent's default system_prompt.
+    -- Outer key = agent name, inner key = model name substring (case-insensitive).
+    -- Value = string or function(chat) -> string.
+    -- Example:
+    --   model_prompts = {
+    --     build = {
+    --       ["gpt"] = "You are a coding agent optimized for OpenAI models...",
+    --       ["qwen"] = function(chat) return "Custom prompt for Qwen..." end,
+    --     },
+    --   }
+    -- The default (claude) prompt is the one defined in each agent's system_prompt field.
+    model_prompts = {},
 
     load_from_dir = nil,
     load_cwd_agents = true,

@@ -116,6 +116,33 @@ function M._setup_chat_events()
       end
     end,
   })
+
+  vim.api.nvim_create_autocmd("User", {
+    pattern = { "CodeCompanionChatAdapter", "CodeCompanionChatModel" },
+    callback = function(event)
+      local bufnr = event.data and event.data.bufnr
+      if not bufnr then return end
+
+      local agent_name = M._chat_agents[bufnr]
+      if not agent_name then return end
+
+      local agent = M._agents and M._agents[agent_name]
+      if not agent then return end
+
+      local ok, codecompanion = pcall(require, "codecompanion")
+      if not ok then return end
+      local chat_ok, chat = pcall(codecompanion.buf_get_chat, bufnr)
+      if not chat_ok or not chat then return end
+
+      local opts = agent.opts or {}
+      if not opts.include_default_system_prompt then chat:remove_tagged_message("system_prompt_from_config") end
+
+      -- Re-apply agent system prompt since the model/adapter changed
+      -- The prompt loader may return a different variant for the new model
+      chat:remove_tagged_message("agent_system_prompt")
+      M._apply_agent_system_prompt(chat, agent, agent_name)
+    end,
+  })
 end
 
 ---Setup single keymap for agent switching
@@ -463,6 +490,45 @@ function M.create_chat(agent_name)
   return chat
 end
 
+---Build a system reminder message for agent mode changes
+---@param from_agent string|nil Previous agent name
+---@param to_agent string New agent name
+---@return string|nil reminder_text
+---TODO: move it to new module for maintainability
+local function build_agent_change_reminder(from_agent, to_agent)
+  if not from_agent then return nil end
+
+  local to_def = M._agents[to_agent]
+  if not to_def then return nil end
+
+  local can_edit = to_def.permissions and to_def.permissions.can_edit_files
+  local can_run_cmd = to_def.permissions and to_def.permissions.can_run_commands
+
+  local mode_desc
+  if can_edit and can_run_cmd then
+    mode_desc = [[You are no longer in read-only mode.
+You are permitted to make file changes, run shell commands, and utilize your arsenal of tools as needed.]]
+  elseif can_edit then
+    mode_desc = [[You are no longer in read-only mode.
+You are permitted to make file changes using your tools.]]
+  elseif can_run_cmd then
+    mode_desc = [[You can run shell commands but cannot edit files directly.]]
+  else
+    mode_desc = [[You are in read-only mode.
+Focus on exploration, analysis, and planning. Do not attempt to modify files.]]
+  end
+
+  return fmt(
+    [[<system-reminder>
+Your operational mode has changed from %s to %s.
+%s
+</system-reminder>]],
+    from_agent,
+    to_agent,
+    mode_desc
+  )
+end
+
 ---Activate an agent on a chat
 ---@param agent_name string
 ---@param chat table CodeCompanion.Chat instance
@@ -489,11 +555,24 @@ function M.activate(agent_name, chat, opts)
 
   M._save_original_opts()
 
+  local previous_agent = current_agent
   if current_agent then M._cleanup_current_agent(chat, current_agent) end
-
   M._apply_agent(chat, agent, agent_name)
-
   M._chat_agents[chat.bufnr] = agent_name
+
+  if previous_agent and agent.type == "agent" then
+    local reminder = build_agent_change_reminder(previous_agent, agent_name)
+    if reminder then
+      local ok, cc_config = pcall(require, "codecompanion.config")
+      if ok and chat.add_message then
+        chat:add_message({
+          -- FIX: Should we do it as role user or system?
+          role = cc_config.constants.SYSTEM_ROLE,
+          content = reminder,
+        }, { visible = false })
+      end
+    end
+  end
 
   local hierarchy = require("codecompanion-extra.agents.hierarchy")
   local session = hierarchy.get_session(chat.bufnr)
@@ -514,6 +593,8 @@ function M.activate(agent_name, chat, opts)
 
   local navigation = require("codecompanion-extra.agents.navigation")
   navigation.setup_winbar(chat.bufnr, true)
+
+  if not is_subagent then navigation.flash_model_info(chat.bufnr) end
 
   return true
 end
@@ -677,6 +758,61 @@ function M._get_extra_tool(tool_name)
   return nil
 end
 
+---Resolve the system prompt for an agent, checking model-specific overrides.
+---Checks agent.model_prompts first, then config model_prompts.
+---@param chat table
+---@param agent CodeCompanionExtra.Agent
+---@param agent_name string
+---@return string|nil
+---@private
+function M._resolve_system_prompt(chat, agent, agent_name)
+  local model_name = ""
+  if chat.adapter then
+    if type(chat.adapter.model) == "table" and chat.adapter.model.name then
+      model_name = chat.adapter.model.name
+    elseif chat.adapter.schema and chat.adapter.schema.model then
+      model_name = chat.adapter.schema.model.default or ""
+    end
+  end
+  local model_lower = model_name:lower()
+
+  -- Check agent-level model_prompts first
+  local prompt_fn = M._match_model_prompt(agent.model_prompts, model_lower)
+
+  -- Then check global config model_prompts for this agent
+  if not prompt_fn then
+    local config_prompts = M._config.model_prompts and M._config.model_prompts[agent_name]
+    prompt_fn = M._match_model_prompt(config_prompts, model_lower)
+  end
+
+  if prompt_fn then
+    if type(prompt_fn) == "function" then return prompt_fn(chat) end
+    return prompt_fn
+  end
+
+  -- Fall back to default agent system_prompt
+  if agent.system_prompt then
+    if type(agent.system_prompt) == "function" then return agent.system_prompt(chat) end
+    ---@cast agent {system_prompt: string}
+    return agent.system_prompt
+  end
+
+  return nil
+end
+
+---Find a matching model prompt from a model_prompts table
+---@param model_prompts? table<string, string|fun(chat: table): string>
+---@param model_lower string Lowercased model name
+---@return (string|fun(chat: table): string)?
+---@private
+function M._match_model_prompt(model_prompts, model_lower)
+  if not model_prompts or model_lower == "" then return nil end
+  for pattern, prompt in pairs(model_prompts) do
+    if model_lower:find(pattern:lower(), 1, true) then return prompt end
+  end
+  return nil
+end
+
 ---Apply agent system prompt to chat
 ---@param chat table
 ---@param agent CodeCompanionExtra.Agent
@@ -694,13 +830,12 @@ function M._apply_agent_system_prompt(chat, agent, agent_name)
     end
   end
 
-  if agent.system_prompt then
-    local prompt
-    if type(agent.system_prompt) == "function" then
-      prompt = agent.system_prompt(chat)
-    else
-      prompt = agent.system_prompt
-    end
+  if
+    agent.system_prompt
+    or agent.model_prompts
+    or (M._config.model_prompts and M._config.model_prompts[agent_name])
+  then
+    local prompt = M._resolve_system_prompt(chat, agent, agent_name)
 
     if prompt and prompt ~= "" then
       local config = require("codecompanion.config")
@@ -709,8 +844,8 @@ function M._apply_agent_system_prompt(chat, agent, agent_name)
         content = prompt,
       }, {
         visible = false,
-        index = 2, -- Old API, we can remove it when codecompanion reach proper v21
-        _meta = { tag = "agent_system_prompt", agent = agent_name, index = 2 },
+        index = 1, -- Old API, TODO: remove it when codecompanion reach proper v21
+        _meta = { tag = "agent_system_prompt", agent = agent_name, index = 1 },
       })
     end
   end

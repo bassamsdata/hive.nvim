@@ -23,7 +23,7 @@ local ICONS = {
   sage = "󰏒",
   reviewer = "",
   security = "󰒃",
-  performance = "⚡",
+  performance = "󰓅",
   default = "",
   thinking = "",
 }

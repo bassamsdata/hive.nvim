@@ -10,9 +10,26 @@ M.keymaps = {}
 ---@type table<number, { winbar_set: boolean, autocmd_id?: number }>
 M._winbar_state = {}
 
+---@type table<number, uv.uv_timer_t|nil> Timers for model info fade
+local _model_flash_timers = {}
+
+---@type table<number, boolean> Whether to show model info in winbar
+local _show_model_info = {}
+
+local MODEL_FLASH_DURATION_MS = 4000
+
 local fmt = string.format
 
 local WINBAR_NS = vim.api.nvim_create_namespace("codecompanion_agent_winbar")
+
+---Get short model name from "adapter/model" format
+---@param model_spec string|nil
+---@return string|nil
+local function short_model_name(model_spec)
+  if not model_spec or model_spec == "" then return nil end
+  local parts = vim.split(model_spec, "/")
+  return parts[#parts]
+end
 
 ---Build winbar string for a chat buffer
 ---@param bufnr number
@@ -59,7 +76,20 @@ local function build_winbar(bufnr)
 
   if #parts == 0 then return nil end
 
-  return " " .. table.concat(parts, "  │  ")
+  local winbar = " " .. table.concat(parts, "  │  ")
+
+  if _show_model_info[bufnr] then
+    local small = short_model_name(vim.g.EXTRA_SMALL_MODEL)
+    local big = short_model_name(vim.g.EXTRA_BIG_MODEL)
+    local model_parts = {}
+    if small then table.insert(model_parts, fmt("small:%s", small)) end
+    if big then table.insert(model_parts, fmt("big:%s", big)) end
+    if #model_parts > 0 then
+      winbar = winbar .. fmt("  │  %%#DiagnosticInfo#%s%%*", table.concat(model_parts, "  "))
+    end
+  end
+
+  return winbar
 end
 
 ---Update winbar for a specific window/buffer
@@ -143,6 +173,13 @@ function M.clear_winbar(bufnr)
   end
 
   M._winbar_state[bufnr] = nil
+  _show_model_info[bufnr] = nil
+  local timer = _model_flash_timers[bufnr]
+  if timer and not timer:is_closing() then
+    timer:stop()
+    timer:close()
+  end
+  _model_flash_timers[bufnr] = nil
 end
 
 ---Refresh winbar for a buffer (call after hierarchy changes)
@@ -151,6 +188,32 @@ function M.refresh_winbar(bufnr)
   if M._winbar_state[bufnr] then vim.schedule(function()
     update_winbar(bufnr)
   end) end
+end
+
+---Briefly show model info in the winbar then fade it out
+---@param bufnr number
+function M.flash_model_info(bufnr)
+  if not vim.g.EXTRA_SMALL_MODEL and not vim.g.EXTRA_BIG_MODEL then return end
+
+  local existing = _model_flash_timers[bufnr]
+  if existing and not existing:is_closing() then
+    existing:stop()
+    existing:close()
+  end
+
+  _show_model_info[bufnr] = true
+  update_winbar(bufnr)
+
+  _model_flash_timers[bufnr] = vim.uv.new_timer()
+  _model_flash_timers[bufnr]:start(
+    MODEL_FLASH_DURATION_MS,
+    0,
+    vim.schedule_wrap(function()
+      _show_model_info[bufnr] = nil
+      _model_flash_timers[bufnr] = nil
+      update_winbar(bufnr)
+    end)
+  )
 end
 
 ---Setup navigation keymaps in CodeCompanion config
