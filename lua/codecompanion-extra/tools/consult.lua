@@ -13,6 +13,7 @@ local subagent = require("codecompanion-extra.tools.subagent")
 
 local api = vim.api
 local fmt = string.format
+local uv = vim.uv
 
 -- ============================================================================
 -- Advisor-Specific Icons
@@ -53,6 +54,9 @@ local SUSPICIOUS_FAST_MS = 2000
 ---@field timeout_timer uv.uv_timer_t|nil Idle timeout timer
 ---@field aug number|nil Autocommand group ID
 ---@field completed boolean Whether consultation has completed
+---@field advisor_info? { name: string, display_name: string, icon: string } Cached advisor display metadata
+---@field agent_icons? string[] Cached icon list for highlight detection
+---@field static_status_lines? string[] Cached static status lines (header + description)
 
 ---@type table<number, ConsultationState> Active consultations by parent bufnr
 local _active_consultations = {}
@@ -92,7 +96,7 @@ local function get_advisor_info(advisor_type)
       return {
         name = agent.name,
         display_name = agent.display_name or subagent.utils.capitalize(agent.name),
-        icon = agent.icon or get_advisor_icon(agent.name),
+        icon = agent.icon ~= "" and agent.icon or get_advisor_icon(agent.name),
       }
     end
   end
@@ -101,6 +105,18 @@ local function get_advisor_info(advisor_type)
     name = advisor_type,
     display_name = subagent.utils.capitalize(advisor_type),
     icon = get_advisor_icon(advisor_type),
+  }
+end
+
+---Rebuild cached status display data for a consultation
+---@param state ConsultationState
+local function rebuild_status_cache(state)
+  local info = state.advisor_info or get_advisor_info(state.advisor_type)
+  state.advisor_info = info
+  state.agent_icons = { info.icon }
+  state.static_status_lines = {
+    fmt("─────── %s %s Consultation ───────", info.icon, info.display_name),
+    fmt("  %s %s", info.icon, state.description),
   }
 end
 
@@ -144,14 +160,8 @@ local function build_status_text(state, spinner_char)
   local elapsed_ms = utils.get_elapsed_ms(state.start_time)
   local elapsed_str = utils.format_duration(elapsed_ms)
 
-  local info = get_advisor_info(state.advisor_type)
-  local lines = {}
-
-  table.insert(
-    lines,
-    fmt("─────── %s %s Consultation ───────", info.icon, info.display_name)
-  )
-  table.insert(lines, fmt("  %s %s", info.icon, state.description))
+  if not state.static_status_lines then rebuild_status_cache(state) end
+  local lines = { state.static_status_lines[1], state.static_status_lines[2] }
 
   if state.status == "running" then
     local tool_info = state.tool_count > 0 and fmt(" | ToolCalls: %d", state.tool_count) or ""
@@ -180,17 +190,17 @@ end
 local function render_status(state)
   if not state.parent_bufnr or not api.nvim_buf_is_valid(state.parent_bufnr) then return end
 
-  local spinner_idx = math.floor((vim.uv.hrtime() - state.start_time) / 100000000) % #subagent.utils.SPINNER_FRAMES + 1
+  local spinner_idx = math.floor((uv.hrtime() - state.start_time) / 100000000) % #subagent.utils.SPINNER_FRAMES + 1
   local spinner_char = subagent.utils.SPINNER_FRAMES[spinner_idx]
+  if not state.agent_icons or not state.static_status_lines then rebuild_status_cache(state) end
 
-  local info = get_advisor_info(state.advisor_type)
   local status_text = build_status_text(state, spinner_char)
   subagent.status.render({
     bufnr = state.parent_bufnr,
     ns_id = state.ns_id,
     text = status_text,
     icons = subagent.utils.STATUS_ICONS,
-    agent_icons = { info.icon },
+    agent_icons = state.agent_icons,
   })
 end
 
@@ -242,7 +252,8 @@ local function reset_timeout_timer(state)
       local session = state.child_bufnr and hierarchy.get_session(state.child_bufnr)
       if not session or session.status ~= "running" then return end
 
-      local info = get_advisor_info(state.advisor_type)
+      local info = state.advisor_info or get_advisor_info(state.advisor_type)
+      state.advisor_info = info
       local elapsed_sec = math.floor(subagent.utils.IDLE_TIMEOUT_MS / 1000)
 
       log:warn(
@@ -428,7 +439,8 @@ local function setup_child_listeners(state)
             tool_count = state.tool_count,
           })
 
-          local info = get_advisor_info(state.advisor_type)
+          local info = state.advisor_info or get_advisor_info(state.advisor_type)
+          state.advisor_info = info
           complete_consultation(state, "error", fmt("Consultation with %s was stopped", info.display_name))
         end)
 
@@ -454,7 +466,8 @@ local function setup_child_listeners(state)
             tool_count = state.tool_count,
           })
 
-          local info = get_advisor_info(state.advisor_type)
+          local info = state.advisor_info or get_advisor_info(state.advisor_type)
+          state.advisor_info = info
           complete_consultation(state, "error", fmt("Consultation with %s was closed", info.display_name))
         end)
 
@@ -508,7 +521,7 @@ local function execute_consultation(args, parent_chat, callback)
     advisor_type = args.advisor_type,
     question = args.question,
     description = fmt("Consulting %s: %s", info.display_name, description),
-    start_time = vim.uv.hrtime(),
+    start_time = uv.hrtime(),
     callback = callback,
     timer = nil,
     ns_id = api.nvim_create_namespace("codecompanion_consult_" .. parent_chat.bufnr),
@@ -516,7 +529,9 @@ local function execute_consultation(args, parent_chat, callback)
     current_tool = nil,
     status = "running",
     completed = false,
+    advisor_info = info,
   }
+  rebuild_status_cache(state)
 
   _active_consultations[parent_chat.bufnr] = state
 
@@ -609,12 +624,14 @@ local function send_followup(state, message, callback)
   state.status = "running"
   state.completed = false
   state.callback = callback
-  state.start_time = vim.uv.hrtime()
+  state.start_time = uv.hrtime()
   state.tool_count = 0
   state.ns_id = api.nvim_create_namespace("codecompanion_consult_followup_" .. state.parent_bufnr)
 
   local info = get_advisor_info(state.advisor_type)
   state.description = fmt("Follow-up with %s", info.display_name)
+  state.advisor_info = info
+  rebuild_status_cache(state)
 
   _active_consultations[state.parent_bufnr] = state
 
