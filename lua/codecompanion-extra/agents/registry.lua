@@ -54,6 +54,7 @@ M.agents = {
       "web_search",
       "todowrite",
       "todoread",
+      "prune",
     },
     permissions = {
       can_spawn_subagents = true,

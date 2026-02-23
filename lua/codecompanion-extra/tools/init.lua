@@ -34,6 +34,9 @@ M.tools = {
   cmd_runner = function()
     return (require("codecompanion-extra.tools.cmd_runner"))
   end,
+  prune = function()
+    return (require("codecompanion-extra.tools.prune"))
+  end,
 }
 
 ---Get a tool definition

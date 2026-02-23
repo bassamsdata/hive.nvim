@@ -48,6 +48,11 @@ function M._setup_modules()
     local agents = require("codecompanion-extra.agents")
     agents.setup(M._config.agents)
   end
+
+  if config.is_module_enabled("context_pruning") then
+    local context_pruning = require("codecompanion-extra.context_pruning")
+    context_pruning.setup(M._config.context_pruning or {})
+  end
 end
 
 ---Get list of available extra adapter names

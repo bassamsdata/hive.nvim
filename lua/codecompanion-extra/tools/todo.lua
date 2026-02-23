@@ -822,21 +822,9 @@ end
 function TodoViewer:render()
   if not self.bufnr or not api.nvim_buf_is_valid(self.bufnr) then return end
 
-  local lines, highlights = self:_build_content()
-
-  api.nvim_set_option_value("modifiable", true, { buf = self.bufnr })
-  api.nvim_buf_set_lines(self.bufnr, 0, -1, false, lines)
-  api.nvim_set_option_value("modifiable", false, { buf = self.bufnr })
-
-  api.nvim_buf_clear_namespace(self.bufnr, self.ns_id, 0, -1)
-  for _, hl in ipairs(highlights) do
-    local line, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
-    if col_end == -1 then col_end = #lines[line + 1] end
-    pcall(api.nvim_buf_set_extmark, self.bufnr, self.ns_id, line, col_start, {
-      end_col = col_end,
-      hl_group = hl_group,
-    })
-  end
+  local dim = self:_calculate_dimensions()
+  local lines, highlights = build_viewer_content({ chat_bufnr = self.chat_bufnr, inner_width = dim.width - 3 })
+  apply_viewer_content({ bufnr = self.bufnr, ns_id = self.ns_id, lines = lines, highlights = highlights })
 end
 
 ---Close the viewer

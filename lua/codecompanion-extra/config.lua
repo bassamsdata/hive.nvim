@@ -100,6 +100,7 @@ M.defaults = {
         show_spinner = true,
       },
     },
+    prune = { enabled = true },
     status = {
       scroll_to_show = true,
       scroll_cursor_distance = 10,
