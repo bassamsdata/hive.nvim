@@ -59,6 +59,15 @@ local _todo_store = {}
 ---@type number
 local _id_counter = 0
 
+---@type TodoSplitViewer|nil
+local _split_viewer = nil
+
+---@type TodoViewer|nil
+local _active_viewer = nil
+
+---@type table<number, boolean> chat_bufnr → true if split was open when chat was hidden
+local _hidden_split_bufnrs = {}
+
 -- ============================================================================
 -- Helper Functions
 -- ============================================================================
@@ -240,11 +249,17 @@ local function build_user_output_write(todos, action)
   end
 
   for _, todo in ipairs(todos) do
-    if todo.status == "completed" then table.insert(lines, fmt("  %s %s", ICONS.completed, todo.content)) end
+    if todo.status == "completed" then
+      local priority_icon = get_priority_icon(todo.priority)
+      table.insert(lines, fmt("  %s %s %s", ICONS.completed, priority_icon, todo.content))
+    end
   end
 
   for _, todo in ipairs(todos) do
-    if todo.status == "cancelled" then table.insert(lines, fmt("  %s %s", ICONS.cancelled, todo.content)) end
+    if todo.status == "cancelled" then
+      local priority_icon = get_priority_icon(todo.priority)
+      table.insert(lines, fmt("  %s %s %s", ICONS.cancelled, priority_icon, todo.content))
+    end
   end
 
   table.insert(lines, "")
@@ -496,6 +511,17 @@ Task list %s. Continue with your work.]],
       local user_output = build_user_output_write(todos, action)
 
       chat:add_tool_output(self, llm_output, user_output)
+
+      if _active_viewer and _active_viewer.chat_bufnr == chat.bufnr then
+        vim.schedule(function()
+          if _active_viewer then _active_viewer:render() end
+        end)
+      end
+      if _split_viewer and _split_viewer.chat_bufnr == chat.bufnr then
+        vim.schedule(function()
+          if _split_viewer then _split_viewer:render() end
+        end)
+      end
     end),
 
     ---@param self CodeCompanion.Tool.TodoWrite
@@ -661,9 +687,6 @@ Review the task list above and continue with your work.]],
 local TodoViewer = {}
 TodoViewer.__index = TodoViewer
 
----@type TodoViewer|nil
-local _active_viewer = nil
-
 ---Create a new TodoViewer
 ---@param chat_bufnr number
 ---@return TodoViewer
@@ -692,11 +715,30 @@ function TodoViewer:_calculate_dimensions()
   return { width = width, height = height, row = row, col = col }
 end
 
----Build content lines for the viewer
+---Apply content lines and highlights to a buffer
+---@param args { bufnr: number, ns_id: number, lines: string[], highlights: table[] }
+local function apply_viewer_content(args)
+  api.nvim_set_option_value("modifiable", true, { buf = args.bufnr })
+  api.nvim_buf_set_lines(args.bufnr, 0, -1, false, args.lines)
+  api.nvim_set_option_value("modifiable", false, { buf = args.bufnr })
+
+  api.nvim_buf_clear_namespace(args.bufnr, args.ns_id, 0, -1)
+  for _, hl in ipairs(args.highlights) do
+    local line, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
+    if col_end == -1 then col_end = #args.lines[line + 1] end
+    pcall(api.nvim_buf_set_extmark, args.bufnr, args.ns_id, line, col_start, {
+      end_col = col_end,
+      hl_group = hl_group,
+    })
+  end
+end
+
+---Build content lines for a todo viewer
+---@param args { chat_bufnr: number, inner_width: number, skip_header?: boolean }
 ---@return string[] lines
 ---@return table[] highlights
-function TodoViewer:_build_content()
-  local todos = get_todos(self.chat_bufnr)
+local function build_viewer_content(args)
+  local todos = get_todos(args.chat_bufnr)
   local lines = {}
   local highlights = {}
 
@@ -704,23 +746,20 @@ function TodoViewer:_build_content()
   api.nvim_set_hl(0, "CodeCompanionTodoMedium", { link = HIGHLIGHTS.medium, bold = true })
   api.nvim_set_hl(0, "CodeCompanionTodoLow", { link = HIGHLIGHTS.low, bold = true })
 
-  local dim = self:_calculate_dimensions()
-  local inner_width = dim.width - 3
+  local inner_width = args.inner_width
 
-  -- Helper to add a line with optional highlight
   local function add_line(text, hl_group)
     table.insert(lines, text)
     if hl_group then table.insert(highlights, { #lines - 1, 0, -1, hl_group }) end
   end
 
-  ---Helper to add a todo line with priority highlight
   ---@param todo CodeCompanionExtra.TodoItem
   ---@param icon string
   ---@param hl string
   local function add_todo_line(todo, icon, hl)
     local priority_icon = get_priority_icon(todo.priority)
     local line = fmt("  %s %s %s", icon, priority_icon, todo.content)
-    if #line > inner_width then line = line:sub(1, inner_width - 1) .. "…" end
+    if #line > inner_width then line = line:sub(1, inner_width - 1) .. "\u{2026}" end
     add_line(line, hl)
 
     local priority_hl = "CodeCompanionTodo" .. todo.priority:gsub("^%l", string.upper)
@@ -728,12 +767,14 @@ function TodoViewer:_build_content()
     if pos then table.insert(highlights, { #lines - 1, pos - 1, pos - 1 + #priority_icon, priority_hl }) end
   end
 
-  -- Header
-  add_line("", nil)
   local counts = count_todos(todos)
-  local progress_text = fmt("  %s %d/%d completed", ICONS.progress, counts.completed, counts.total)
-  add_line(progress_text, HIGHLIGHTS.header)
+
   add_line("", nil)
+  if not args.skip_header then
+    local progress_text = fmt("  %s %d/%d completed", ICONS.progress, counts.completed, counts.total)
+    add_line(progress_text, HIGHLIGHTS.header)
+    add_line("", nil)
+  end
 
   if #todos == 0 then
     add_line("  No tasks yet", HIGHLIGHTS.pending)
@@ -741,7 +782,6 @@ function TodoViewer:_build_content()
     add_line("  The agent will create tasks", HIGHLIGHTS.pending)
     add_line("  when working on complex operations.", HIGHLIGHTS.pending)
   else
-    -- Show ALL tasks individually, grouped by status
     for _, todo in ipairs(todos) do
       if todo.status == "in_progress" then add_todo_line(todo, ICONS.in_progress, HIGHLIGHTS.in_progress) end
     end
@@ -789,7 +829,7 @@ function TodoViewer:show()
     border = "rounded",
     title = fmt(" %s Task List ", ICONS.todo),
     title_pos = "center",
-    footer = " q:close ",
+    footer = " q:close  R:refresh ",
     footer_pos = "center",
   })
 
@@ -806,6 +846,10 @@ function TodoViewer:show()
       self:close()
     end, { buffer = self.bufnr, nowait = true })
   end
+
+  vim.keymap.set("n", "R", function()
+    self:render()
+  end, { buffer = self.bufnr, nowait = true })
 
   api.nvim_create_autocmd("WinLeave", {
     buffer = self.bufnr,
@@ -836,8 +880,116 @@ function TodoViewer:close()
 end
 
 -- ============================================================================
--- Module Exports
+-- Todo Split Viewer
 -- ============================================================================
+
+---@class TodoSplitViewer
+---@field bufnr number|nil
+---@field winnr number|nil
+---@field ns_id number
+---@field chat_bufnr number
+---@field height number
+local TodoSplitViewer = {}
+TodoSplitViewer.__index = TodoSplitViewer
+
+---Create a new TodoSplitViewer
+---@param chat_bufnr number
+---@return TodoSplitViewer
+function TodoSplitViewer.new(chat_bufnr)
+  local self = setmetatable({}, TodoSplitViewer)
+  self.chat_bufnr = chat_bufnr
+  self.height = 7
+  self.ns_id = api.nvim_create_namespace("codecompanion_todo_split")
+  return self
+end
+
+---Open the split viewer below the chat window
+function TodoSplitViewer:open()
+  if self.winnr and api.nvim_win_is_valid(self.winnr) then return end
+
+  local chat_win = vim.fn.bufwinid(self.chat_bufnr)
+  if chat_win == -1 then return end
+
+  self.bufnr = api.nvim_create_buf(false, true)
+  api.nvim_set_option_value("buftype", "nofile", { buf = self.bufnr })
+  api.nvim_set_option_value("bufhidden", "wipe", { buf = self.bufnr })
+  api.nvim_set_option_value("swapfile", false, { buf = self.bufnr })
+  api.nvim_buf_set_name(self.bufnr, "CodeCompanion_Todos_Split")
+  vim.b[self.bufnr].miniindentscope_disable = true
+
+  api.nvim_win_call(chat_win, function()
+    vim.cmd(fmt("belowright %dsplit", self.height))
+    self.winnr = api.nvim_get_current_win()
+    api.nvim_win_set_buf(self.winnr, self.bufnr)
+  end)
+
+  if not self.winnr or not api.nvim_win_is_valid(self.winnr) then return end
+
+  api.nvim_set_option_value("wrap", true, { win = self.winnr })
+  api.nvim_set_option_value("cursorline", false, { win = self.winnr })
+  api.nvim_set_option_value("number", false, { win = self.winnr })
+  api.nvim_set_option_value("relativenumber", false, { win = self.winnr })
+  api.nvim_set_option_value("signcolumn", "no", { win = self.winnr })
+  api.nvim_set_option_value("winfixheight", true, { win = self.winnr })
+
+  vim.wo[self.winnr].winbar = self:_build_winbar()
+
+  _split_viewer = self
+
+  self:render()
+
+  api.nvim_set_current_win(chat_win)
+
+  vim.keymap.set("n", "q", function()
+    self:close()
+  end, { buffer = self.bufnr, nowait = true })
+
+  vim.keymap.set("n", "R", function()
+    self:render()
+  end, { buffer = self.bufnr, nowait = true })
+
+  api.nvim_create_autocmd("BufWipeout", {
+    buffer = self.bufnr,
+    once = true,
+    callback = function()
+      self.winnr = nil
+      self.bufnr = nil
+      if _split_viewer == self then _split_viewer = nil end
+    end,
+  })
+end
+
+---Build winbar string with progress info
+---@return string
+function TodoSplitViewer:_build_winbar()
+  local todos = get_todos(self.chat_bufnr)
+  local counts = count_todos(todos)
+  local progress = fmt("%s %d/%d", ICONS.progress, counts.completed, counts.total)
+  return fmt(
+    "%%=%%#Title# %s Task List %%*  %%#DiagnosticOk#%s%%*  %%#Comment#q:close  R:refresh%%*%%=",
+    ICONS.todo,
+    progress
+  )
+end
+
+---Render content into the split buffer
+function TodoSplitViewer:render()
+  if not self.bufnr or not api.nvim_buf_is_valid(self.bufnr) then return end
+
+  local lines, highlights =
+    build_viewer_content({ chat_bufnr = self.chat_bufnr, inner_width = vim.o.columns - 3, skip_header = true })
+  apply_viewer_content({ bufnr = self.bufnr, ns_id = self.ns_id, lines = lines, highlights = highlights })
+
+  if self.winnr and api.nvim_win_is_valid(self.winnr) then vim.wo[self.winnr].winbar = self:_build_winbar() end
+end
+
+---Close the split viewer
+function TodoSplitViewer:close()
+  if self.winnr and api.nvim_win_is_valid(self.winnr) then api.nvim_win_close(self.winnr, true) end
+  self.winnr = nil
+  self.bufnr = nil
+  if _split_viewer == self then _split_viewer = nil end
+end
 
 local M = {}
 
@@ -884,6 +1036,24 @@ function M.close_viewer()
   if _active_viewer then _active_viewer:close() end
 end
 
+---Toggle the split viewer for a chat buffer
+---@param chat_bufnr number
+function M.toggle_split_viewer(chat_bufnr)
+  if _split_viewer and _split_viewer.chat_bufnr == chat_bufnr then
+    _hidden_split_bufnrs[chat_bufnr] = nil
+    _split_viewer:close()
+  else
+    if _split_viewer then _split_viewer:close() end
+    local viewer = TodoSplitViewer.new(chat_bufnr)
+    viewer:open()
+  end
+end
+
+---Close active split viewer if any
+function M.close_split_viewer()
+  if _split_viewer then _split_viewer:close() end
+end
+
 ---Setup keymap for todo viewer
 ---@param keymap? string|table Default "gT"
 ---@return nil
@@ -905,6 +1075,61 @@ function M.setup_keymap(keymap)
       if chat and chat.bufnr then M.show_viewer(chat.bufnr) end
     end,
   }
+
+  chat_keymaps["todo_split"] = {
+    modes = { n = { "sd" } },
+    index = 52,
+    description = "[Todo] Toggle split task list",
+    callback = function(chat)
+      if chat and chat.bufnr then M.toggle_split_viewer(chat.bufnr) end
+    end,
+  }
+
+  M._setup_chat_toggle_events()
+end
+
+---Setup autocmds to hide/restore split viewer when chat toggles
+---@private
+function M._setup_chat_toggle_events()
+  local group = vim.api.nvim_create_augroup("CodeCompanionExtraTodoSplit", { clear = true })
+
+  vim.api.nvim_create_autocmd("User", {
+    group = group,
+    pattern = "CodeCompanionChatHidden",
+    callback = function(event)
+      local bufnr = event.data and event.data.bufnr
+      if not bufnr then return end
+      if _split_viewer and _split_viewer.chat_bufnr == bufnr then
+        _hidden_split_bufnrs[bufnr] = true
+        _split_viewer:close()
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("User", {
+    group = group,
+    pattern = "CodeCompanionChatOpened",
+    callback = function(event)
+      local bufnr = event.data and event.data.bufnr
+      if not bufnr then return end
+      if _hidden_split_bufnrs[bufnr] then
+        _hidden_split_bufnrs[bufnr] = nil
+        vim.schedule(function()
+          local viewer = TodoSplitViewer.new(bufnr)
+          viewer:open()
+        end)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("User", {
+    group = group,
+    pattern = "CodeCompanionChatClosed",
+    callback = function(event)
+      local bufnr = event.data and event.data.bufnr
+      if bufnr then _hidden_split_bufnrs[bufnr] = nil end
+    end,
+  })
 end
 
 return M
