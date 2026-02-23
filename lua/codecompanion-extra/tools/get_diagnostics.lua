@@ -1,130 +1,17 @@
---[[
-===============================================================================
-    File:       codecompanion-extra/tools/get_diagnostics.lua
-    Author:     Bassam Data (https://github.com/bassamsdata)
--------------------------------------------------------------------------------
-    Description:
-      Retrieves diagnostics (errors, warnings, info, hints) from a file for the LLM to analyze and fix.
-      Uses vim.diagnostic API to fetch LSP diagnostics and other diagnostic sources.
-      Uses textDocument/didOpen notification to trigger LSP diagnostics without opening a buffer.
-
-      Strategy (inspired by github.com/bassamsdata/namu.nvim):
-        1. Send didOpen to LSP with file content
-        2. Poll vim.diagnostic.get() multiple times with delays
-        3. Wait for diagnostic count to stabilize (same count N times in a row)
-        4. No reliance on events (DiagnosticChanged is unreliable for virtual docs)
--------------------------------------------------------------------------------
-    Attribution:
-      If you use or distribute this code, please credit:
-      Bassam Data (https://github.com/bassamsdata)
-===============================================================================
---]]
-
----BUG: I'm getting some false-positive from solow LSPs or big files.
----I think we need to do something, maybe make the first time and second time we retirieve
----a bit longer.
-
-local Path = require("plenary.path")
-local helpers = require("codecompanion.utils.files")
 local log = require("codecompanion.utils.log")
 local compat = require("codecompanion-extra.tools.compat")
-local tool_helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
 
 local api = vim.api
 local uv = vim.uv
 local fmt = string.format
 
---------------------------------------------------------------------------------
--- Configuration
---------------------------------------------------------------------------------
-
-local DEBUG_ENABLED = false
-local LOG_FILE_PATH = vim.fn.stdpath("cache") .. "/get_diagnostics_debug.log"
-
 local CONFIG = {
-  -- Initial delay before first poll (let LSP start processing)
   initial_delay_ms = 300,
-  -- Delay between polls
   poll_delay_ms = 300,
-  -- Maximum number of poll attempts
   max_polls = 12,
-  -- How many consecutive stable counts before we stop (1 = two polls with same count)
   stable_count_threshold = 1,
-  -- Maximum total wait time (safety net)
   max_total_ms = 6000,
 }
-
---------------------------------------------------------------------------------
--- Async File Logger
---------------------------------------------------------------------------------
-
-local Logger = {}
-Logger.__index = Logger
-
-function Logger.new(filepath)
-  local self = setmetatable({}, Logger)
-  self.filepath = filepath
-  self.queue = {}
-  self.writing = false
-  return self
-end
-
-function Logger:log(level, message, ...)
-  if not DEBUG_ENABLED then return end
-
-  local ok, formatted = pcall(fmt, message, ...)
-  if not ok then formatted = message .. " (fmt error)" end
-
-  local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-  local ms = math.floor((uv.hrtime() / 1e6) % 1000)
-  local entry = fmt("[%s.%03d] [%-5s] %s\n", timestamp, ms, level, formatted)
-
-  table.insert(self.queue, entry)
-  self:_flush_async()
-end
-
-function Logger:debug(msg, ...)
-  self:log("DEBUG", msg, ...)
-end
-function Logger:info(msg, ...)
-  self:log("INFO", msg, ...)
-end
-function Logger:warn(msg, ...)
-  self:log("WARN", msg, ...)
-end
-function Logger:error(msg, ...)
-  self:log("ERROR", msg, ...)
-end
-
-function Logger:_flush_async()
-  if self.writing or #self.queue == 0 then return end
-
-  self.writing = true
-  local entries = table.concat(self.queue)
-  self.queue = {}
-
-  uv.fs_open(self.filepath, "a", 438, function(err_open, fd)
-    if err_open or not fd then
-      self.writing = false
-      return
-    end
-
-    uv.fs_write(fd, entries, -1, function(_)
-      uv.fs_close(fd, function()
-        self.writing = false
-        if #self.queue > 0 then vim.schedule(function()
-          self:_flush_async()
-        end) end
-      end)
-    end)
-  end)
-end
-
-local dlog = Logger.new(LOG_FILE_PATH)
-
---------------------------------------------------------------------------------
--- Severity Mappings
---------------------------------------------------------------------------------
 
 local SEVERITY_NAMES = {
   [vim.diagnostic.severity.ERROR] = "ERROR",
@@ -244,16 +131,12 @@ local function notify_lsp_about_file(path, content, filetype)
   local clients = vim.lsp.get_clients()
   local notified_names = {}
 
-  dlog:debug("notify_lsp_about_file: path=%s, filetype=%s, clients=%d", path, filetype, #clients)
-
   for _, client in ipairs(clients) do
     client = ensure_client_compatibility(client)
 
     local has_sync = client_supports_sync(client)
     local filetypes = client.config and client.config.filetypes
     local handles_filetype = filetypes and vim.tbl_contains(filetypes, filetype)
-
-    dlog:debug("  %s: sync=%s, handles_ft=%s", client.name, tostring(has_sync), tostring(handles_filetype))
 
     if has_sync and handles_filetype then
       local uri = vim.uri_from_fname(path)
@@ -266,7 +149,6 @@ local function notify_lsp_about_file(path, content, filetype)
         },
       })
       table.insert(notified_names, client.name)
-      dlog:info("  -> didOpen sent to %s", client.name)
     end
   end
 
@@ -277,7 +159,6 @@ end
 ---@param path string The file path (absolute)
 local function close_lsp_document(path)
   local uri = vim.uri_from_fname(path)
-  dlog:debug("close_lsp_document: %s", path)
 
   for _, client in ipairs(vim.lsp.get_clients()) do
     client = ensure_client_compatibility(client)
@@ -324,74 +205,45 @@ local function poll_for_diagnostics(abs_path, diag_opts, callback)
   local stable_count = 0
   local last_diagnostics = {}
 
-  dlog:info("=== poll_for_diagnostics START ===")
-  dlog:info("path=%s, max_polls=%d, stable_threshold=%d", abs_path, CONFIG.max_polls, CONFIG.stable_count_threshold)
-
   local function do_poll()
     poll_count = poll_count + 1
     local elapsed = (uv.hrtime() - start_time) / 1e6
 
-    -- Safety: max time exceeded
     if elapsed > CONFIG.max_total_ms then
-      dlog:warn("Max time exceeded (%.0fms), returning current results", elapsed)
-      dlog:info("=== poll_for_diagnostics END (timeout) ===")
       callback(last_diagnostics)
       return
     end
 
-    -- Get current diagnostics
     local diags = get_file_diagnostics(abs_path, diag_opts)
     local current_count = #diags
 
-    -- Check stability (increment BEFORE logging and checking)
     if current_count == last_count then
       stable_count = stable_count + 1
     else
       stable_count = 0
     end
 
-    dlog:debug(
-      "Poll %d: count=%d, last=%d, stable=%d, elapsed=%.0fms",
-      poll_count,
-      current_count,
-      last_count,
-      stable_count,
-      elapsed
-    )
-
     last_count = current_count
     last_diagnostics = diags
 
-    -- Determine if we should stop
     local should_stop = false
-    local stop_reason = ""
 
     if poll_count >= CONFIG.max_polls then
       should_stop = true
-      stop_reason = fmt("max_polls reached (%d)", CONFIG.max_polls)
     elseif stable_count >= CONFIG.stable_count_threshold and current_count > 0 then
       should_stop = true
-      stop_reason = fmt("stable with %d diagnostics (stable_count=%d)", current_count, stable_count)
     elseif stable_count >= CONFIG.stable_count_threshold + 1 and current_count == 0 then
-      -- Allow extra poll for zero case (LSP might be slow)
       should_stop = true
-      stop_reason = "stable at 0 diagnostics"
     end
 
     if should_stop then
-      dlog:info("Stopping: %s", stop_reason)
-      dlog:info("Final: %d diagnostics after %d polls, %.0fms", current_count, poll_count, elapsed)
-      dlog:info("=== poll_for_diagnostics END ===")
       callback(last_diagnostics)
       return
     end
 
-    -- Schedule next poll
     vim.defer_fn(do_poll, CONFIG.poll_delay_ms)
   end
 
-  -- Start polling after initial delay
-  dlog:info("Starting poll after %dms initial delay", CONFIG.initial_delay_ms)
   vim.defer_fn(do_poll, CONFIG.initial_delay_ms)
 end
 
@@ -414,21 +266,18 @@ local function format_diagnostics_result(diagnostics, path, lines, severity_arg)
     }
   end
 
-  -- Sort by severity then line
   table.sort(diagnostics, function(a, b)
     if a.severity ~= b.severity then return a.severity < b.severity end
     if a.lnum ~= b.lnum then return a.lnum < b.lnum end
     return (a.col or 0) < (b.col or 0)
   end)
 
-  -- Count by severity
   local counts = {}
   for _, diag in ipairs(diagnostics) do
     local sev = SEVERITY_NAMES[diag.severity] or "UNKNOWN"
     counts[sev] = (counts[sev] or 0) + 1
   end
 
-  -- Build summary
   local summary_parts = {}
   for _, sev in ipairs({ "ERROR", "WARNING", "INFO", "HINT" }) do
     if counts[sev] then
@@ -437,7 +286,6 @@ local function format_diagnostics_result(diagnostics, path, lines, severity_arg)
   end
   local summary = table.concat(summary_parts, ", ")
 
-  -- Format output
   local output = {
     fmt("Diagnostics for `%s` (%s):", path, summary),
     "",
@@ -460,17 +308,13 @@ end
 ---@param action {filepath: string, severity: string}
 ---@param callback fun(result: {status: "success"|"error", data: string})
 local function get_diagnostics_async(action, callback)
-  dlog:info("")
-  dlog:info("========================================")
-  dlog:info("get_diagnostics_async: filepath=%s, severity=%s", action.filepath, action.severity or "all")
-  dlog:info("========================================")
-
+  local Path = require("plenary.path")
+  local helpers = require("codecompanion.utils.files")
   local path = helpers.validate_and_normalize_path(action.filepath)
   local abs_path = vim.fn.fnamemodify(path, ":p")
   local p = Path:new(abs_path)
 
   if not p:exists() or not p:is_file() then
-    dlog:error("File not found: %s", abs_path)
     callback({
       status = "error",
       data = fmt("Error: File `%s` does not exist or is not a file", path),
@@ -478,59 +322,34 @@ local function get_diagnostics_async(action, callback)
     return
   end
 
-  -- Check if buffer is already loaded
   local bufnr = vim.fn.bufnr(abs_path)
   local buffer_loaded = bufnr ~= -1 and api.nvim_buf_is_loaded(bufnr)
 
-  dlog:info("Buffer: bufnr=%d, loaded=%s", bufnr, tostring(buffer_loaded))
-
-  -- Read file content
   local content = p:read()
   local lines = vim.split(content, "\n", { plain = true })
 
-  -- Determine filetype
   local filetype = vim.filetype.match({ filename = abs_path, contents = lines })
-  dlog:info("Filetype: %s", filetype or "unknown")
 
-  -- Log LSP clients
-  local all_clients = vim.lsp.get_clients()
-  dlog:info("LSP clients: %d", #all_clients)
-  for _, c in ipairs(all_clients) do
-    local ft = c.config and c.config.filetypes and table.concat(c.config.filetypes, ",") or "?"
-    dlog:debug("  %s (id=%d): filetypes=%s", c.name, c.id, ft)
-  end
-
-  -- Parse severity filter
   local severity_filter = parse_severity_filter(action.severity)
   local diag_opts = {}
   if severity_filter then diag_opts.severity = severity_filter end
 
   if buffer_loaded then
-    -- Buffer already loaded - get diagnostics directly (sync path)
-    dlog:info("Buffer loaded, getting diagnostics directly")
     local diagnostics = vim.diagnostic.get(bufnr, diag_opts)
-    dlog:info("Got %d diagnostics from buffer", #diagnostics)
     callback(format_diagnostics_result(diagnostics, path, lines, action.severity))
     return
   end
 
-  -- Send didOpen and poll for diagnostics (async path)
-  local notified, notified_names = notify_lsp_about_file(abs_path, content, filetype or "")
+  local notified, _ = notify_lsp_about_file(abs_path, content, filetype or "")
 
   if not notified then
-    dlog:warn("No LSP clients notified, checking existing diagnostics")
     local diagnostics = get_file_diagnostics(abs_path, diag_opts)
     callback(format_diagnostics_result(diagnostics, path, lines, action.severity))
     return
   end
 
-  dlog:info("Notified LSPs: %s", table.concat(notified_names, ", "))
-
-  -- Async polling
   poll_for_diagnostics(abs_path, diag_opts, function(diagnostics)
-    -- Cleanup virtual document
     close_lsp_document(abs_path)
-    dlog:info("Final result: %d diagnostics", #diagnostics)
     callback(format_diagnostics_result(diagnostics, path, lines, action.severity))
   end)
 end
@@ -550,11 +369,9 @@ return {
     compat.cmds(function(_self, args, opts)
       local cb = opts.output_cb
       if cb then
-        -- Async mode: use callback
         get_diagnostics_async(args, cb)
       else
-        -- Sync fallback (shouldn't happen with modern CodeCompanion)
-        dlog:warn("Running in sync mode (no callback provided)")
+        -- (shouldn't happen with new CodeCompanion)
         local result = nil
         local done = false
         get_diagnostics_async(args, function(r)
@@ -650,6 +467,7 @@ Results are sorted by severity (errors first) then by line number.]],
 
     rejected = compat.output_rejected(function(self, meta)
       local message = "The user rejected the get diagnostics tool"
+      local tool_helpers = require("codecompanion.interactions.chat.tools.builtin.helpers")
       if compat.is_new_api() then
         local opts = vim.tbl_extend("force", { message = message }, meta.opts or {})
         opts.tools = meta.tools
