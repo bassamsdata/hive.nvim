@@ -324,7 +324,7 @@ function AskUserForm:render()
   if not self.bufnr or not api.nvim_buf_is_valid(self.bufnr) then return end
 
   ---@type string[]
-  ---@type table[]  -- highlights: {line, col_start, col_end, hl_group}
+  ---@type table[] highlights: {line, col_start, col_end, hl_group}
   local lines, highlights = self:_build_content()
 
   -- Filter newlines from lines to prevent nvim_buf_set_lines errors
@@ -758,6 +758,16 @@ end
 function AskUserForm:show()
   if active_form then active_form:close() end
   active_form = self
+
+  local ok, notify_ctrl = pcall(require, "codecompanion-extra.notify_controller")
+  if ok then
+    local instance = notify_ctrl.instance()
+    if instance then
+      local preview = self.context or (self.questions[1] and self.questions[1].question) or "Agent is asking a question"
+      instance:notify("question", preview)
+    end
+  end
+
   self:_open()
 end
 

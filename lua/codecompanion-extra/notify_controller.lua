@@ -53,7 +53,7 @@ function NotifyController:setup_focus_tracking()
   })
 end
 
----@param status "completed"|"error"|"cancelled"
+---@param status "completed"|"error"|"cancelled"|"question"
 ---@param message string
 function NotifyController:notify(status, message)
   if not self.config.enabled then return end
