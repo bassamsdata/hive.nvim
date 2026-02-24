@@ -1,5 +1,5 @@
 vim.cmd([[let &rtp.=','.getcwd()]])
-vim.cmd("set rtp+=deps/mini.nvim")
+vim.cmd("set rtp+=deps/mini.test")
 
 -- codecompanion.nvim and its dependencies (for compat tests)
 local cc_path = vim.fn.getcwd() .. "/deps/codecompanion.nvim"
