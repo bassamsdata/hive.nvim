@@ -898,7 +898,7 @@ TodoSplitViewer.__index = TodoSplitViewer
 function TodoSplitViewer.new(chat_bufnr)
   local self = setmetatable({}, TodoSplitViewer)
   self.chat_bufnr = chat_bufnr
-  self.height = 7
+  self.height = 6
   self.ns_id = api.nvim_create_namespace("codecompanion_todo_split")
   return self
 end
@@ -947,7 +947,6 @@ function TodoSplitViewer:open()
   vim.keymap.set("n", "R", function()
     self:render()
   end, { buffer = self.bufnr, nowait = true })
-
   api.nvim_create_autocmd("BufWipeout", {
     buffer = self.bufnr,
     once = true,
@@ -1127,7 +1126,9 @@ function M._setup_chat_toggle_events()
     pattern = "CodeCompanionChatClosed",
     callback = function(event)
       local bufnr = event.data and event.data.bufnr
-      if bufnr then _hidden_split_bufnrs[bufnr] = nil end
+      if not bufnr then return end
+      _hidden_split_bufnrs[bufnr] = nil
+      if _split_viewer and _split_viewer.chat_bufnr == bufnr then _split_viewer:close() end
     end,
   })
 end
