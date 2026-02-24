@@ -37,7 +37,7 @@ end
 local function parse_frontmatter(content)
   content = normalize_content(content)
 
-  local frontmatter_yaml, body = content:match("^%-%-%-\n(.-)\n%-%-%-\n(.*)$")
+  local frontmatter_yaml, body = content:match("^%-%-%-\n(.-)\n%-%-%-\n?(.*)$")
   if not frontmatter_yaml then return nil, content end
 
   local ok, yaml = pcall(require, "codecompanion.utils.yaml")
