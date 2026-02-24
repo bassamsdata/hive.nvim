@@ -58,6 +58,7 @@ function M.setup(config)
   M._setup_todo_keymap()
   M._setup_model_picker()
   M._setup_debug_keymap()
+  M._setup_agent_manager_keymap()
 end
 
 ---Register each agent as a tool group in codecompanion config
@@ -233,6 +234,30 @@ end
 function M._setup_todo_keymap()
   local todo = require("codecompanion-extra.tools.todo")
   todo.setup_keymap({ n = { "gT", "st", "]t" } })
+end
+
+---Setup agent manager toggle keymap in chat buffer
+---@private
+function M._setup_agent_manager_keymap()
+  local keymap_config = M._config.keymap or {}
+  local manager_key = keymap_config.agent_manager
+  if not manager_key then return end
+
+  local ok, cc_config = pcall(require, "codecompanion.config")
+  if not ok then return end
+
+  local chat_keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
+  if not chat_keymaps then return end
+
+  chat_keymaps["agent_manager"] = {
+    modes = manager_key,
+    index = 52,
+    description = "[Agent] Toggle agent manager",
+    callback = function(_chat)
+      local agent_manager = require("codecompanion-extra.agent_manager")
+      agent_manager.toggle()
+    end,
+  }
 end
 
 ---Setup model picker keymap for subagent small/big model assignment

@@ -115,6 +115,7 @@ M.defaults = {
     keymap = {
       switch = { n = { "gO", "sa", "]a" } },
       cycle = { n = { "<Tab>" } },
+      agent_manager = { n = { "gA", "sA" } },
       -- Navigation keymaps are registered automatically:
 
       -- ]s - next subagent

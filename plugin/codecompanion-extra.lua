@@ -192,6 +192,17 @@ local subcommands = {
     end,
   },
 
+  ---Toggle Agent Manager UI
+  manager = {
+    impl = function()
+      local extra = require("codecompanion-extra")
+      if not extra.is_initialized() then extra.setup() end
+
+      local manager = require("codecompanion-extra.agent_manager")
+      manager.toggle()
+    end,
+  },
+
   ---Navigate to parent agent
   parent = {
     impl = function()
