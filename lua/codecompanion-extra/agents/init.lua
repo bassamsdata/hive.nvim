@@ -564,13 +564,13 @@ function M.activate(agent_name, chat, opts)
     local reminder = build_agent_change_reminder(previous_agent, agent_name)
     if reminder then
       local ok, cc_config = pcall(require, "codecompanion.config")
-      if ok and chat.add_message then
-        chat:add_message({
-          -- FIX: Should we do it as role user or system?
-          role = cc_config.constants.SYSTEM_ROLE,
-          content = reminder,
-        }, { visible = false })
-      end
+          if old_tool_ids[msg.context.id] then return false end
+        end
+        if msg._meta and msg._meta.agent == old_agent_name then return false end
+        return true
+      end)
+      :totable()
+  end
     end
   end
 
