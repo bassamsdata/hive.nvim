@@ -87,6 +87,42 @@ function M._register_agent_groups()
   end
 end
 
+---Close all children of a parent chat recursively by calling chat:close() on each
+---@param child_bufnrs number[] List of child buffer numbers to close
+local function close_children_recursive(child_bufnrs)
+  local hierarchy = require("codecompanion-extra.agents.hierarchy")
+  local ok, codecompanion = pcall(require, "codecompanion")
+
+  for _, child_bufnr in ipairs(child_bufnrs) do
+    local session = hierarchy.get_session(child_bufnr)
+
+    -- Cancel any pending async callback so the task tool doesn't hang
+    if session and (session.status == "pending" or session.status == "running") then
+      local cb = hierarchy.pop_pending_callback(child_bufnr)
+      if cb then
+        hierarchy.set_status(child_bufnr, "cancelled")
+        cb({
+          status = "error",
+          data = fmt("Subagent '%s' was closed because parent chat was closed", session.agent_name or "unknown"),
+        })
+      end
+    end
+
+    if session and #session.children > 0 then close_children_recursive(vim.deepcopy(session.children)) end
+
+    if ok then
+      local chat_ok, chat = pcall(codecompanion.buf_get_chat, child_bufnr)
+      if chat_ok and chat then
+        pcall(chat.close, chat)
+      elseif vim.api.nvim_buf_is_valid(child_bufnr) then
+        pcall(vim.api.nvim_buf_delete, child_bufnr, { force = true })
+      end
+    elseif vim.api.nvim_buf_is_valid(child_bufnr) then
+      pcall(vim.api.nvim_buf_delete, child_bufnr, { force = true })
+    end
+  end
+end
+
 ---Setup event listeners for chat lifecycle
 ---@private
 function M._setup_chat_events()
@@ -96,8 +132,9 @@ function M._setup_chat_events()
       local bufnr = event.data and event.data.bufnr
       if bufnr then
         local hierarchy = require("codecompanion-extra.agents.hierarchy")
-
         local session = hierarchy.get_session(bufnr)
+        local children_to_close = session and #session.children > 0 and vim.deepcopy(session.children) or {}
+
         if session and session.status == "running" then
           local cb = hierarchy.pop_pending_callback(bufnr)
           if cb then
@@ -114,6 +151,12 @@ function M._setup_chat_events()
 
         M._chat_agents[bufnr] = nil
         hierarchy.remove(bufnr)
+
+        if #children_to_close > 0 then
+          vim.schedule(function()
+            close_children_recursive(children_to_close)
+          end)
+        end
       end
     end,
   })
@@ -589,13 +632,13 @@ function M.activate(agent_name, chat, opts)
     local reminder = build_agent_change_reminder(previous_agent, agent_name)
     if reminder then
       local ok, cc_config = pcall(require, "codecompanion.config")
-          if old_tool_ids[msg.context.id] then return false end
-        end
-        if msg._meta and msg._meta.agent == old_agent_name then return false end
-        return true
-      end)
-      :totable()
-  end
+      if ok and chat.add_message then
+        chat:remove_tagged_message("agent_change_reminder")
+        chat:add_message({
+          role = cc_config.constants.SYSTEM_ROLE,
+          content = reminder,
+        }, { visible = false, _meta = { tag = "agent_change_reminder" } })
+      end
     end
   end
 
