@@ -904,56 +904,54 @@ return {
     type = "function",
     ["function"] = {
       name = "ask_user",
-      description = [[Ask the user one or more clarifying questions before proceeding with a task.
+      description = [[
+Use this `ask_user` tool when clarification is required to continue execution or planning.
 
-Use this tool when you need:
-- Clarification on ambiguous requirements
-- User preference between multiple valid approaches
-- Confirmation before making significant changes
-- Additional context that would improve your response
+If a small clarification would unblock progress → CALL THIS TOOL.  
+DO NOT end the agent loop.
 
-The user will see all questions in a form and can answer them. You'll receive their responses to continue.
+Use ONLY when:
+- Scope is ambiguous
+- Multiple valid approaches exist
+- Critical context is missing
+- Significant changes require confirmation
 
-QUESTION TYPES:
-- "text": Free-form text input (open-ended questions)
-- "choice": Single selection from options (exclusive choices)
-- "multi_choice": Multiple selections allowed (non-exclusive options)
+Keep questions minimal (1–5).  
+Each question MUST affect execution.
+Text type MUST use empty choices: []
+Mark only essential questions as required
+Keep wording minimal
 
-EXAMPLE:
+If using only `choice` or `multi_choice`, INCLUDE at least ONE `text` question so the user can provide additional input.
+
+
+## Example
 {
-  "context": "Before I refactor the authentication system, I need to understand your requirements.",
+  "context": "I need clarification before proceeding with the refactor.",
   "questions": [
     {
       "id": "scope",
       "question": "Which parts should be refactored?",
       "type": "multi_choice",
-      "choices": ["Login flow", "Session management", "Password reset", "OAuth integration"],
+      "choices": ["Login flow", "Session management", "OAuth"],
       "required": true
     },
     {
       "id": "priority",
-      "question": "What's most important?",
+      "question": "What is the main goal?",
       "type": "choice",
-      "choices": ["Security", "Performance", "Maintainability", "User experience"],
+      "choices": ["Security", "Performance", "Maintainability"],
       "required": true
     },
     {
-      "id": "constraints",
-      "question": "Any constraints or requirements I should know about?",
+      "id": "notes",
+      "question": "Any additional constraints or preferences?",
       "type": "text",
       "choices": [],
       "required": false
     }
   ]
 }
-
-GUIDELINES:
-- Keep questions concise and clear
-- Use choice/multi_choice when you can anticipate options
-- Use text for open-ended questions (with empty choices array)
-- Mark truly essential questions as required
-- Provide helpful context so user understands why you're asking
-- Don't ask too many questions at once (3-5 is ideal)
 ]],
       parameters = {
         type = "object",
@@ -1001,7 +999,8 @@ GUIDELINES:
       },
     },
   },
-  system_prompt = [[You have access to the questions tool named `ask_user` tool to ask the user clarifying questions.
+  system_prompt = [[
+You have access to the questions tool named `ask_user` tool to ask the user clarifying questions.
 
 WHEN TO USE:
 - Before large refactors: Ask about scope, priorities, constraints
@@ -1009,23 +1008,10 @@ WHEN TO USE:
 - Multiple valid approaches: Let user choose their preference
 - Missing context: Ask for information you need
 
-CRITICAL RULE: NEVER end your response just to ask the user a question. If you need clarification, preferences, or confirmation from the user, you MUST use the `ask_user` tool. Do NOT write questions in your chat message and stop — the user cannot reply inline. The `ask_user` tool creates an interactive form that the user can fill out, and you will receive their responses to continue working.
-
-Examples of when you MUST use `ask_user` instead of just asking in chat:
-- "Which approach do you prefer?" → Use ask_user with choice type
-- "Should I also update the tests?" → Use ask_user with choice type
-- "What name would you like for this?" → Use ask_user with text type
-- "Before I proceed, I need to know..." → Use ask_user with appropriate types
-
-The user will see all questions in a form and can answer them. You'll receive their responses to continue.
-
-GUIDELINES:
-- Keep questions concise and clear
-- Use choice/multi_choice when you can anticipate options
-- Use text for open-ended questions (with empty choices array)
-- Mark truly essential questions as required
-- Provide helpful context so user understands why you're asking
-- Don't ask too many questions at once (3-5 is ideal)]],
+If clarification is required, you MUST use the `ask_user` tool.  
+NEVER ask questions in chat and stop.  
+A minor clarification is NOT a reason to end the loop — use the tool and continue.
+]],
   handlers = {
     ---Setup handler called before tool execution
     ---@param self CodeCompanion.Tools.Tool

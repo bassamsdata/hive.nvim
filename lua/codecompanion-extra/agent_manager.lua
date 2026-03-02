@@ -155,6 +155,7 @@ function ChatHub:_create_window()
   for opt, val in pairs(buf_opts) do
     api.nvim_set_option_value(opt, val, { buf = self.bufnr })
   end
+  vim.b[self.bufnr].miniindentscope_disable = true
 
   local win_opts = {
     cursorline = true,

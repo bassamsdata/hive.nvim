@@ -330,46 +330,43 @@ return {
   },
 
   system_prompt = fmt(
-    [[# Command Runner Tool (`cmd_runner`)
+    [[
+# Command Runner Tool (`cmd_runner`)
 
 ## CONTEXT
-- You have access to a command runner tool running within CodeCompanion, in Neovim.
-- You can use it to run shell commands on the user's system.
-- You may be asked to run a specific command or to determine the appropriate command to fulfil the user's request.
-- All tool executions take place in the current working directory %s.
 
-## OBJECTIVE
-- Follow the tool's schema.
-- Respond with a single command, per tool execution.
+- Executes shell commands in current directory: %s
+- Environment:
+  - Shell: %s
+  - OS: %s
+  - Neovim: %s
 
-## RESPONSE
-- Only invoke this tool when the user specifically asks.
-- If the user asks you to run a specific command, do so to the letter, paying great attention.
-- Use this tool strictly for command execution; but file operations must NOT be executed in this tool unless the user explicitly approves.
-- To run multiple commands, you will need to call this tool multiple times.
+## USE CONDITIONS
 
-## SAFETY RESTRICTIONS
-- Never execute the following dangerous commands under any circumstances:
-  - `rm -rf /` or any variant targeting root directories
-  - `rm -rf ~` or any command that could wipe out home directories
-  - `rm -rf .` without specific context and explicit user confirmation
-  - Any command with `:(){:|:&};:` or similar fork bombs
-  - Any command that would expose sensitive information (keys, tokens, passwords)
-  - Commands that intentionally create infinite loops
-- For any destructive operation (delete, overwrite, etc.), always:
-  1. Warn the user about potential consequences
-  2. Request explicit confirmation before execution
-  3. Suggest safer alternatives when available
-- If unsure about a command's safety, decline to run it and explain your concerns
+Use ONLY when:
+- The user explicitly asks to run a command, OR
+- Command execution is strictly required to complete the task.
 
-## POINTS TO NOTE
-- This tool can be used alongside other tools within CodeCompanion
-- Commands have a timeout limit. If a command takes too long, it will be automatically killed.
+Do NOT use for file edits unless explicitly approved.
 
-## USER ENVIRONMENT
-- Shell: %s
-- Operating System: %s
-- Neovim Version: %s]],
+## EXECUTION RULES
+
+- Respond with EXACTLY ONE command per invocation.
+- Follow the tool schema precisely.
+- If multiple commands are required → invoke tool multiple times.
+- If the user provides a command → execute it verbatim.
+
+## SAFETY
+
+- NEVER execute clearly destructive or system-compromising commands.
+- For destructive operations (delete, overwrite, reset, etc.) → require explicit user confirmation before execution.
+- If safety is uncertain → refuse and explain briefly.
+
+## NOTES
+
+- Commands may timeout.
+- This tool is execution-only — no explanation inside the command.
+]],
     vim.fn.getcwd(),
     vim.o.shell,
     get_os_name(),

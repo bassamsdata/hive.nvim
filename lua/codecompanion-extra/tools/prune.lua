@@ -11,6 +11,7 @@ THE PRUNE TOOL
 - **Noise**: irrelevant or unhelpful tool outputs
 - **Superseded data**: older outputs replaced by newer reads/searches
 - **Wrong targets**: files or searches that turned out to be irrelevant
+- When you read files only to verify that they contain the correct content or fix, or when you use `get_changed_files` merely to check for changes without actually needing to reference the file contents.
 
 A `<prunable-tools>` section appears in your context showing eligible outputs. Each line reads `ID: tool, parameter (~token count)`. Reference outputs by their numeric ID — these are your ONLY valid targets.
 

@@ -181,8 +181,6 @@ function M._setup_chat_events()
       local opts = agent.opts or {}
       if not opts.include_default_system_prompt then chat:remove_tagged_message("system_prompt_from_config") end
 
-      -- Re-apply agent system prompt since the model/adapter changed
-      -- The prompt loader may return a different variant for the new model
       chat:remove_tagged_message("agent_system_prompt")
       M._apply_agent_system_prompt(chat, agent, agent_name)
     end,
