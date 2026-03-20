@@ -1,5 +1,9 @@
 local api = vim.api
 
+local function _debug(msg)
+  require("codecompanion-extra.debug").log("prune", msg)
+end
+
 local PRUNABLE_TAG = "prunable_context"
 local PRUNED_PLACEHOLDER = "[Output pruned to save context - information superseded or no longer needed]"
 
@@ -48,23 +52,38 @@ function PruningManager:_estimate_tokens(content)
 end
 
 ---Build a call_id → { name, args } lookup from messages
----LLM tool_call messages have tools.calls = [{id, function: {name, arguments}}]
+---LLM tool_call messages have tools.calls = [{id, call_id?, function: {name, arguments}}]
+---OpenAI Responses API uses separate `id` (item id) and `call_id` (function call id)
 ---@param messages table[]
 ---@return table<string, { name: string, args: table? }>
 function PruningManager:_build_call_id_map(messages)
   local map = {}
+  local call_count = 0
   for _, msg in ipairs(messages) do
     if msg.tools and msg.tools.calls then
       for _, call in ipairs(msg.tools.calls) do
-        if call.id and call["function"] and call["function"].name then
-          map[call.id] = {
+        if call["function"] and call["function"].name then
+          local entry = {
             name = call["function"].name,
             args = type(call["function"].arguments) == "table" and call["function"].arguments or nil,
           }
+          if call.id then map[call.id] = entry end
+          -- OpenAI Responses API: call_id is the actual function call identifier
+          if call.call_id and call.call_id ~= call.id then map[call.call_id] = entry end
+          call_count = call_count + 1
+          _debug(
+            string.format(
+              "  call_id_map: name=%s id=%s call_id=%s",
+              call["function"].name,
+              call.id or "nil",
+              call.call_id or "nil"
+            )
+          )
         end
       end
     end
   end
+  _debug(string.format("build_call_id_map: %d calls mapped from %d messages", call_count, #messages))
   return map
 end
 
@@ -107,12 +126,22 @@ function PruningManager:scan_messages(messages, bufnr)
   local entries = {}
 
   local numeric_id = 0
+  local skipped_no_call_info = 0
+  local skipped_pruned = 0
+  local skipped_protected = 0
   for _, msg in ipairs(messages) do
     if msg.role == "tool" and msg.tools and msg.tools.call_id then
       local call_id = msg.tools.call_id
       local call_info = call_id_map[call_id]
 
-      if call_info and not pruned_set[call_id] and not self:_is_protected(call_info.name) then
+      if not call_info then
+        skipped_no_call_info = skipped_no_call_info + 1
+        _debug(string.format("  scan: tool msg call_id=%s -> NO match in call_id_map", call_id))
+      elseif pruned_set[call_id] then
+        skipped_pruned = skipped_pruned + 1
+      elseif self:_is_protected(call_info.name) then
+        skipped_protected = skipped_protected + 1
+      else
         local description = self:_extract_description(call_info.name, call_info.args)
         local token_estimate = self:_estimate_tokens(msg.content)
 
@@ -123,11 +152,21 @@ function PruningManager:scan_messages(messages, bufnr)
           description = description,
           token_estimate = token_estimate,
         })
+        numeric_id = numeric_id + 1
       end
-      numeric_id = numeric_id + 1
     end
   end
 
+  _debug(
+    string.format(
+      "scan_messages: bufnr=%d entries=%d skipped_no_match=%d skipped_pruned=%d skipped_protected=%d",
+      bufnr,
+      #entries,
+      skipped_no_call_info,
+      skipped_pruned,
+      skipped_protected
+    )
+  )
   return entries
 end
 
@@ -204,12 +243,14 @@ end
 function PruningManager:update_prunable_message(chat)
   local messages = chat.messages
   local bufnr = chat.bufnr
+  _debug(string.format("update_prunable_message: bufnr=%s msg_count=%d", tostring(bufnr), #messages))
   local prunable_list = self:build_prunable_list(messages, bufnr)
 
   for i, msg in ipairs(messages) do
     if msg._meta and msg._meta.tag == PRUNABLE_TAG then
       if prunable_list ~= "" then
         msg.content = prunable_list
+        msg._meta.estimated_tokens = math.floor(#prunable_list / 4)
       else
         table.remove(messages, i)
       end
@@ -247,6 +288,7 @@ function PruningManager:setup_events()
     callback = function(event)
       local bufnr = event.data and event.data.bufnr
       if not bufnr then return end
+      _debug(string.format("event: %s bufnr=%d", event.match, bufnr))
 
       local h_ok, hierarchy = pcall(require, "codecompanion-extra.agents.hierarchy")
       if h_ok and hierarchy.get_session then
