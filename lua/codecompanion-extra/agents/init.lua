@@ -228,6 +228,9 @@ end
 function M._setup_navigation()
   local navigation = require("codecompanion-extra.agents.navigation")
   navigation.setup()
+
+  local prunable_viewer = require("codecompanion-extra.prune.viewer")
+  prunable_viewer.setup()
 end
 
 ---Override debug keymap to inject agent name into the debug window

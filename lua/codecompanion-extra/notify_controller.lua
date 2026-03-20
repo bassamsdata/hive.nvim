@@ -12,6 +12,7 @@ local DEFAULT_CONFIG = {
     completed = true,
     error = true,
     cancelled = false,
+    approval = true,
   },
   title = "CodeCompanion Extra",
   fallback = true,
@@ -49,6 +50,15 @@ function NotifyController:setup_focus_tracking()
     group = self.aug,
     callback = function()
       self.is_focused = false
+    end,
+  })
+
+  api.nvim_create_autocmd("User", {
+    group = self.aug,
+    pattern = "CodeCompanionToolApprovalRequested",
+    callback = function(event)
+      local tool_name = event.data and (event.data.name or event.data.tool) or "unknown"
+      self:notify("approval", string.format("Tool '%s' is waiting for approval", tool_name))
     end,
   })
 end

@@ -50,7 +50,7 @@ function M._setup_modules()
   end
 
   if config.is_module_enabled("context_pruning") then
-    local context_pruning = require("codecompanion-extra.context_pruning")
+    local context_pruning = require("codecompanion-extra.prune.context_pruning")
     context_pruning.setup(M._config.context_pruning or {})
   end
 end

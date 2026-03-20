@@ -11,16 +11,11 @@
 --   3. Add the state to get_view() return value
 --   4. Wire event routing in spinner.lua
 
-local DEBUG_LOG_PATH = vim.fn.stdpath("data") .. "/ccextra_debug.log"
 local M = {}
 
--- local function debug_log(msg)
---   local f = io.open(DEBUG_LOG_PATH, "a")
---   if f then
---     f:write(string.format("[%s] [state] %s\n", os.date("%H:%M:%S"), msg))
---     f:close()
---   end
--- end
+local function _debug(msg)
+  require("codecompanion-extra.debug").log("state", msg)
+end
 
 -- ============================================================================
 -- Type Definitions
@@ -258,7 +253,7 @@ function StateManager:on_chat_submitted(bufnr)
     parent.completed_at = nil
   end
 
-  M.debug_log(
+  _debug(
     string.format(
       "on_chat_submitted: bufnr=%d | cancelled_timer=%s | BEFORE: total_started=%s | duration_ms=%s | completed_at=%s",
       bufnr,
@@ -273,14 +268,14 @@ function StateManager:on_chat_submitted(bufnr)
   -- Between ChatSubmitted and ChatDone, completed_at is nil (only set by _finalize_chat_duration).
   -- So total_started set + completed_at nil = mid-cycle continuation.
   if parent.total_started and not parent.completed_at then
-    M.debug_log(string.format("  early return: mid-cycle continuation"))
+    _debug(string.format("  early return: mid-cycle continuation"))
     return
   end
 
   parent.total_started = vim.uv.now()
   parent.duration_ms = nil
   parent.completed_at = nil
-  M.debug_log(
+  _debug(
     string.format(
       "  AFTER:  total_started=%d | duration_ms=%s | completed_at=%s",
       parent.total_started,
@@ -332,7 +327,7 @@ end
 ---@param bufnr number
 ---@param status "success"|"error"|"cancelled"|string
 function StateManager:on_request_finished(bufnr, status)
-  M.debug_log("on_request_finished called, bufnr=" .. tostring(bufnr) .. " status=" .. tostring(status))
+  _debug("on_request_finished called, bufnr=" .. tostring(bufnr) .. " status=" .. tostring(status))
   local parent = self:get_parent(bufnr, true)
   if not parent then return end
   local final_status
@@ -349,7 +344,7 @@ function StateManager:on_request_finished(bufnr, status)
 
   if not parent.current_tool and vim.tbl_isempty(parent.active_tools) then
     parent.status = final_status
-    M.debug_log("  set status to: " .. final_status)
+    _debug("  set status to: " .. final_status)
   end
 
   -- NOTE: The idle transition is only triggered
@@ -490,7 +485,7 @@ end
 ---@param adapter? table Adapter info from the event data
 ---@param interaction? "inline"|"cmd" The interaction type
 function StateManager:on_inline_started(bufnr, adapter, interaction)
-  M.debug_log("on_inline_started called, bufnr=" .. tostring(bufnr))
+  _debug("on_inline_started called, bufnr=" .. tostring(bufnr))
 
   -- Cancel any previous inline completion timer
   _safe_close_inline_timer(self.inline)
@@ -516,7 +511,7 @@ end
 
 ---@param status? "success"|"error"|string
 function StateManager:on_inline_finished(status)
-  M.debug_log("on_inline_finished called, status=" .. tostring(status))
+  _debug("on_inline_finished called, status=" .. tostring(status))
   if not self.inline.active then return end
 
   local now = vim.uv.now()
@@ -537,7 +532,7 @@ function StateManager:on_inline_finished(status)
     display_time,
     0,
     vim.schedule_wrap(function()
-      M.debug_log("inline completion timer fired")
+      _debug("inline completion timer fired")
       self:_reset_inline()
     end)
   )
@@ -756,11 +751,7 @@ function M.instance()
 end
 
 function M.debug_log(msg)
-  local f = io.open(DEBUG_LOG_PATH, "a")
-  if f then
-    f:write(string.format("[%s] [state] %s\n", os.date("%H:%M:%S"), msg))
-    f:close()
-  end
+  _debug(msg)
 end
 
 return M

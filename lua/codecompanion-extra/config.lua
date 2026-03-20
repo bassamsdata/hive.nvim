@@ -72,6 +72,7 @@ M.defaults = {
       error = true,
       cancelled = false,
       question = true,
+      approval = true,
     },
     title = "CC Extra",
     fallback = true,

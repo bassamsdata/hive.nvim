@@ -15,6 +15,13 @@ THE PRUNE TOOL
 
 A `<prunable-tools>` section appears in your context showing eligible outputs. Each line reads `ID: tool, parameter (~token count)`. Reference outputs by their numeric ID — these are your ONLY valid targets.
 
+CRITICAL ID RULES:
+- You MUST use the EXACT numeric IDs shown in the `<prunable-tools>` list
+- IDs are NOT sequential — they may be 209, 215, 220, etc.
+- Do NOT invent IDs or use sequential numbers (1, 2, 3...)
+- If no `<prunable-tools>` section exists, there is NOTHING to prune — do not call the tool
+- BEFORE calling prune, quote the specific IDs you see in `<prunable-tools>` to verify
+
 BATCH WISELY: Accumulate several candidates before pruning. Don't prune one tiny output alone.
 
 DO NOT PRUNE WHEN:
@@ -117,7 +124,7 @@ return {
         return
       end
 
-      local manager = require("codecompanion-extra.context_pruning").instance()
+      local manager = require("codecompanion-extra.prune.context_pruning").instance()
       if not manager then
         chat:add_tool_output(self, "Context pruning manager not initialized", "✗ Prune failed")
         return
@@ -137,6 +144,21 @@ return {
       end
 
       local llm_output = table.concat(parts, "\n")
+
+      -- If all IDs failed, add a hint about valid IDs
+      if result.pruned == 0 and #result.skipped > 0 then
+        local valid_ids = {}
+        local scan_entries = manager:scan_messages(chat.messages, chat.bufnr)
+        for _, entry in ipairs(scan_entries) do
+          table.insert(valid_ids, tostring(entry.numeric_id))
+        end
+        if #valid_ids > 0 then
+          llm_output = llm_output
+            .. fmt("\n\nValid prunable IDs are: [%s]. Use ONLY these exact IDs.", table.concat(valid_ids, ", "))
+        else
+          llm_output = llm_output .. "\n\nNo prunable outputs exist. Do not call prune again."
+        end
+      end
       local user_output = fmt(" Pruned %d output(s) (~%d tokens saved)", result.pruned, result.tokens_saved)
 
       chat:add_tool_output(self, llm_output, user_output)
