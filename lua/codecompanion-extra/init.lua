@@ -49,9 +49,19 @@ function M._setup_modules()
     agents.setup(M._config.agents)
   end
 
-  if config.is_module_enabled("context_pruning") then
+  if config.is_module_enabled("context_pruning") or config.is_module_enabled("context_lifecycle") then
     local context_pruning = require("codecompanion-extra.prune.context_pruning")
     context_pruning.setup(M._config.context_pruning or {})
+  end
+
+  if config.is_module_enabled("twinchat") then
+    local twinchat = require("codecompanion-extra.twinchat")
+    twinchat.setup(M._config.twinchat or {})
+  end
+
+  if config.is_module_enabled("context_lifecycle") then
+    local context_lifecycle = require("codecompanion-extra.context_lifecycle")
+    context_lifecycle.setup(M._config.context_lifecycle or {})
   end
 end
 

@@ -20,6 +20,9 @@ M.tools = {
   list_directory = function()
     return (require("codecompanion-extra.tools.list_directory"))
   end,
+  grep_search = function()
+    return (require("codecompanion-extra.tools.grep_search"))
+  end,
   todowrite = function()
     local todo = require("codecompanion-extra.tools.todo")
     return todo.get_todowrite()
@@ -36,6 +39,46 @@ M.tools = {
   end,
   prune = function()
     return (require("codecompanion-extra.tools.prune"))
+  end,
+  swarm = function()
+    local manager = require("codecompanion-extra.swarm.tools.manager")
+    return manager.get_tool()
+  end,
+  claim_task = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("claim_task")
+  end,
+  complete_task = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("complete_task")
+  end,
+  release_task = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("release_task")
+  end,
+  lock_file = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("lock_file")
+  end,
+  unlock_file = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("unlock_file")
+  end,
+  send_update = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("send_update")
+  end,
+  send_to_peer = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("send_to_peer")
+  end,
+  read_messages = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("read_messages")
+  end,
+  get_swarm_status = function()
+    local worker = require("codecompanion-extra.swarm.tools.worker")
+    return worker.get("get_swarm_status")
   end,
 }
 

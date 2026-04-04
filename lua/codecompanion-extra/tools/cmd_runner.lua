@@ -9,6 +9,7 @@ local SPINNER_FRAMES = subagent_utils.SPINNER_FRAMES
 local DEFAULT_TIMEOUT_S = 60
 local DEFAULT_SHOW_TIMER_AFTER_S = 5
 local STATUS_UPDATE_INTERVAL_MS = subagent_utils.UPDATE_INTERVAL_MS
+local MAX_OUTPUT_LINES = 500
 
 ---Strip ANSI escape codes from a table of strings
 ---@param tbl string[]
@@ -92,8 +93,18 @@ local DEFAULT_DANGEROUS_PATTERNS = {
   -- Curl-to-shell (arbitrary remote code execution)
   "*curl *| bash*",
   "*curl *| sh*",
+  "*curl *| zsh*",
+  "*curl *| fish*",
   "*wget *| bash*",
   "*wget *| sh*",
+  "*wget *| zsh*",
+  "*wget *| fish*",
+  -- Git commands that can remove changes
+  "*git reset --hard HEAD*",
+  "*git checkout *",
+  "*git clean -fd*",
+  "*git revert HEAD*",
+  "*git reset --soft HEAD~1*",
 }
 -- stylua: ignore end
 
@@ -193,6 +204,21 @@ return {
         if done then return end
         done = true
         cleanup()
+
+        if result and result.data and #result.data > MAX_OUTPUT_LINES then
+          local total_lines = #result.data
+          local truncated = {}
+          for i = 1, MAX_OUTPUT_LINES do
+            table.insert(truncated, result.data[i])
+          end
+          result.data = truncated
+          table.insert(
+            result.data,
+            1,
+            fmt("... [Output truncated. Showing first %d of %d lines] ...", MAX_OUTPUT_LINES, total_lines)
+          )
+        end
+
         if output_cb then output_cb(result) end
       end)
 
@@ -359,7 +385,9 @@ Do NOT use for file edits unless explicitly approved.
 ## SAFETY
 
 - NEVER execute clearly destructive or system-compromising commands.
+- NEVER run interactive commands that wait for user input (e.g., interactive prompts, `vim`, `less`). They will hang and fail.
 - For destructive operations (delete, overwrite, reset, etc.) → require explicit user confirmation before execution.
+
 - If safety is uncertain → refuse and explain briefly.
 
 ## NOTES

@@ -40,6 +40,26 @@ function M.is_new_api()
   return false
 end
 
+--- Strip vim.NIL values from decoded JSON args.
+--- LLMs sometimes send explicit `null` for optional fields, which vim.json.decode
+--- converts to vim.NIL. This can cause issues when the args are re-serialized
+--- or sent back to the provider.
+---@param tbl table
+---@return table
+local function _strip_nil_values(tbl)
+  local result = {}
+  for k, v in pairs(tbl) do
+    if v ~= vim.NIL then
+      if type(v) == "table" then
+        result[k] = _strip_nil_values(v)
+      else
+        result[k] = v
+      end
+    end
+  end
+  return result
+end
+
 --- Wrap a `cmds` function.
 --- NEW: `function(tools, args, opts)`   — opts = { input, output_cb }
 --- OLD: `function(tools, args, input, output_handler)`
@@ -48,6 +68,8 @@ end
 function M.cmds(fn)
   return function(tools, args, arg3, arg4)
     if _detected_new_api == nil then _detected_new_api = (type(arg4) ~= "function") end
+
+    if type(args) == "table" then args = _strip_nil_values(args) end
 
     if _detected_new_api then
       return fn(tools, args, arg3 or {})

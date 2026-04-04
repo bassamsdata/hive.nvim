@@ -38,6 +38,31 @@ local function build_content(chat)
 
   ins(lines, fmt(" Prunable Tool Outputs (%d entries)", #entries))
   ins(highlights, { #lines - 1, 0, #lines[#lines], "Title" })
+
+  local cl_ok, context_lifecycle = pcall(require, "codecompanion-extra.context_lifecycle")
+  local eval = cl_ok and context_lifecycle.get_evaluation and context_lifecycle.get_evaluation(chat.bufnr)
+  if eval and eval.context_window and eval.context_window > 0 then
+    local pct_str = fmt("%d%%", math.floor(eval.percentage))
+    local ctx_line = fmt(
+      " Context: %dk / %dk tokens (%s used)",
+      math.floor(eval.estimated_tokens / 1000),
+      math.floor(eval.context_window / 1000),
+      pct_str
+    )
+    ins(lines, ctx_line)
+    local hl_group = "DiagnosticOk"
+    if eval.urgency == "critical" then
+      hl_group = "DiagnosticError"
+    elseif eval.urgency == "high" then
+      hl_group = "DiagnosticError"
+    elseif eval.urgency == "medium" then
+      hl_group = "DiagnosticWarn"
+    elseif eval.urgency == "low" then
+      hl_group = "DiagnosticInfo"
+    end
+    ins(highlights, { #lines - 1, 0, #lines[#lines], hl_group })
+  end
+
   ins(lines, string.rep("─", 60))
   ins(highlights, { #lines - 1, 0, #lines[#lines], "Comment" })
   ins(lines, "")
@@ -102,14 +127,19 @@ function M.open(chat)
   local max_height = math.floor(vim.o.lines * 0.6)
 
   width = math.min(math.max(width + 4, 40), max_width)
-  local height = math.min(#lines, max_height)
+  local height = math.max(math.min(#lines, max_height), 3)
+
+  if vim.o.lines < height + 4 or vim.o.columns < width + 4 then
+    vim.notify("Not enough room for prunable viewer", vim.log.levels.WARN)
+    return
+  end
 
   local row = math.floor((vim.o.lines - height - 4) / 2)
   local col = math.floor((vim.o.columns - width - 4) / 2)
   row = math.max(0, row)
   col = math.max(0, col)
 
-  _float_win = api.nvim_open_win(_float_buf, true, {
+  local ok_win, win = pcall(api.nvim_open_win, _float_buf, true, {
     relative = "editor",
     row = row,
     col = col,
@@ -120,6 +150,12 @@ function M.open(chat)
     title = " Prunable Context ",
     title_pos = "center",
   })
+
+  if not ok_win then
+    _float_buf = nil
+    return
+  end
+  _float_win = win
 
   local ns = api.nvim_create_namespace("prunable_viewer")
   for _, hl in ipairs(highlights) do
@@ -139,7 +175,9 @@ function M.open(chat)
   api.nvim_create_autocmd("BufLeave", {
     buffer = _float_buf,
     once = true,
-    callback = close_float,
+    callback = function()
+      vim.schedule(close_float)
+    end,
   })
 end
 
@@ -167,14 +205,19 @@ end
 
 ---Setup keymap in CodeCompanion chat config
 function M.setup()
+  local extra_config = require("codecompanion-extra.config")
+
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
 
   local keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not keymaps then return end
 
+  local modes = extra_config.keymap_modes("prunable_viewer")
+  if not modes then return end
+
   keymaps["prunable_viewer"] = {
-    modes = { n = "gP" },
+    modes = modes,
     index = 65,
     callback = function(chat)
       M.open(chat)

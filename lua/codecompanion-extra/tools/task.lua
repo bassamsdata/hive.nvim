@@ -175,6 +175,7 @@ function TaskBatch:build_status_text(spinner_char)
   end
 
   table.insert(lines, fmt("  %s Total: %s", utils.STATUS_ICONS.timer, elapsed_str))
+  table.insert(lines, "  " .. utils.KEYMAP_HINTS)
 
   return table.concat(lines, "\n")
 end

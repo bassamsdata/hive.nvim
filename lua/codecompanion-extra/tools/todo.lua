@@ -964,10 +964,12 @@ function TodoSplitViewer:_build_winbar()
   local todos = get_todos(self.chat_bufnr)
   local counts = count_todos(todos)
   local progress = fmt("%s %d/%d", ICONS.progress, counts.completed, counts.total)
+  local prefix = require("codecompanion-extra.config").keymap_prefix()
   return fmt(
-    "%%=%%#Title# %s Task List %%*  %%#DiagnosticOk#%s%%*  %%#Comment#q:close  R:refresh%%*%%=",
+    "%%=%%#Title# %s Task List %%*  %%#DiagnosticOk#%s%%*  %%#Comment#%sd:toggle  q:close  R:refresh%%*%%=",
     ICONS.todo,
-    progress
+    progress,
+    prefix
   )
 end
 
@@ -1054,11 +1056,9 @@ function M.close_split_viewer()
 end
 
 ---Setup keymap for todo viewer
----@param keymap? string|table Default "gT"
 ---@return nil
-function M.setup_keymap(keymap)
-  keymap = keymap or "gT"
-  local modes = type(keymap) == "table" and keymap or { n = keymap }
+function M.setup_keymap()
+  local extra_config = require("codecompanion-extra.config")
 
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
@@ -1066,23 +1066,29 @@ function M.setup_keymap(keymap)
   local chat_keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not chat_keymaps then return end
 
-  chat_keymaps["todo_viewer"] = {
-    modes = modes,
-    index = 51,
-    description = "[Todo] View task list",
-    callback = function(chat)
-      if chat and chat.bufnr then M.show_viewer(chat.bufnr) end
-    end,
-  }
+  local viewer_modes = extra_config.keymap_modes("todo_viewer")
+  if viewer_modes then
+    chat_keymaps["todo_viewer"] = {
+      modes = viewer_modes,
+      index = 51,
+      description = "[Todo] View task list",
+      callback = function(chat)
+        if chat and chat.bufnr then M.show_viewer(chat.bufnr) end
+      end,
+    }
+  end
 
-  chat_keymaps["todo_split"] = {
-    modes = { n = { "sd" } },
-    index = 52,
-    description = "[Todo] Toggle split task list",
-    callback = function(chat)
-      if chat and chat.bufnr then M.toggle_split_viewer(chat.bufnr) end
-    end,
-  }
+  local split_modes = extra_config.keymap_modes("todo_split")
+  if split_modes then
+    chat_keymaps["todo_split"] = {
+      modes = split_modes,
+      index = 52,
+      description = "[Todo] Toggle split task list",
+      callback = function(chat)
+        if chat and chat.bufnr then M.toggle_split_viewer(chat.bufnr) end
+      end,
+    }
+  end
 
   M._setup_chat_toggle_events()
 end

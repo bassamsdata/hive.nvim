@@ -153,14 +153,19 @@ end
 ---Register the chat buffer keymap
 ---@return nil
 function M.setup()
+  local extra_config = require("codecompanion-extra.config")
+
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
 
   local keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not keymaps then return end
 
+  local modes = extra_config.keymap_modes("subagent_model")
+  if not modes then return end
+
   keymaps["subagent_model"] = {
-    modes = { n = { "gm", "sm", "]m" } },
+    modes = modes,
     index = 56,
     description = "[Model] Set subagent model (small/big)",
     callback = function(chat)

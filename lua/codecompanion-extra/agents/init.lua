@@ -59,6 +59,7 @@ function M.setup(config)
   M._setup_model_picker()
   M._setup_debug_keymap()
   M._setup_agent_manager_keymap()
+  M._setup_keymap_help()
 end
 
 ---Register each agent as a tool group in codecompanion config
@@ -190,10 +191,7 @@ end
 ---Setup single keymap for agent switching
 ---@private
 function M._setup_keymap()
-  local keymap_config = M._config.keymap or {}
-  local switch_key = keymap_config.switch
-
-  if not switch_key then return end
+  local extra_config = require("codecompanion-extra.config")
 
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
@@ -201,19 +199,22 @@ function M._setup_keymap()
   local chat_keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not chat_keymaps then return end
 
-  chat_keymaps["agent_switch"] = {
-    modes = switch_key,
-    index = 50,
-    description = "[Agent] Switch agent",
-    callback = function(chat)
-      M._switch_agent(chat)
-    end,
-  }
+  local switch_modes = extra_config.keymap_modes("agent_switch")
+  if switch_modes then
+    chat_keymaps["agent_switch"] = {
+      modes = switch_modes,
+      index = 50,
+      description = "[Agent] Switch agent",
+      callback = function(chat)
+        M._switch_agent(chat)
+      end,
+    }
+  end
 
-  local cycle_key = keymap_config.cycle
-  if cycle_key then
+  local cycle_modes = extra_config.keymap_modes("agent_cycle")
+  if cycle_modes then
     chat_keymaps["agent_cycle"] = {
-      modes = cycle_key,
+      modes = cycle_modes,
       index = 51,
       description = "[Agent] Cycle to next agent",
       callback = function(chat)
@@ -268,7 +269,15 @@ function M._setup_debug_keymap()
       local agent_def = M._agents[agent_name]
       local agent_line = '-- Agent: "' .. agent_name .. '"'
       if agent_def and agent_def.description then agent_line = agent_line .. " (" .. agent_def.description .. ")" end
-      vim.api.nvim_buf_set_lines(debug_instance.bufnr, insert_idx, insert_idx, false, { agent_line })
+
+      local extra_lines = { agent_line }
+
+      local small = vim.g.EXTRA_SMALL_MODEL or (M._config and M._config.small_model)
+      local big = vim.g.EXTRA_BIG_MODEL or (M._config and M._config.big_model)
+      if small then table.insert(extra_lines, '-- Small Model: "' .. small .. '"') end
+      if big then table.insert(extra_lines, '-- Big Model: "' .. big .. '"') end
+
+      vim.api.nvim_buf_set_lines(debug_instance.bufnr, insert_idx, insert_idx, false, extra_lines)
     end
   end
 end
@@ -277,15 +286,13 @@ end
 ---@private
 function M._setup_todo_keymap()
   local todo = require("codecompanion-extra.tools.todo")
-  todo.setup_keymap({ n = { "gT", "st", "]t" } })
+  todo.setup_keymap()
 end
 
 ---Setup agent manager toggle keymap in chat buffer
 ---@private
 function M._setup_agent_manager_keymap()
-  local keymap_config = M._config.keymap or {}
-  local manager_key = keymap_config.agent_manager
-  if not manager_key then return end
+  local extra_config = require("codecompanion-extra.config")
 
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
@@ -293,8 +300,11 @@ function M._setup_agent_manager_keymap()
   local chat_keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not chat_keymaps then return end
 
+  local modes = extra_config.keymap_modes("agent_manager")
+  if not modes then return end
+
   chat_keymaps["agent_manager"] = {
-    modes = manager_key,
+    modes = modes,
     index = 52,
     description = "[Agent] Toggle agent manager",
     callback = function(_chat)
@@ -309,6 +319,12 @@ end
 function M._setup_model_picker()
   local model_picker = require("codecompanion-extra.tools.subagent.model_picker")
   model_picker.setup()
+end
+
+---@private
+function M._setup_keymap_help()
+  local keymap_help = require("codecompanion-extra.keymap_help")
+  keymap_help.setup()
 end
 
 ---Register extra tools (task, ask_user, skill) globally
@@ -693,47 +709,22 @@ end
 ---@param old_agent_name string
 ---@private
 function M._cleanup_current_agent(chat, old_agent_name)
-  local group_id = "<group>agent_" .. old_agent_name .. "</group>"
-  local old_agent = M._agents[old_agent_name]
-  local old_tools = old_agent and old_agent.tools or {}
+  local group_name = "agent_" .. old_agent_name
 
-  local old_tool_ids = {}
-  for _, tool_name in ipairs(old_tools) do
-    old_tool_ids["<tool>" .. tool_name .. "</tool>"] = true
-  end
+  -- Delegate tool/group/context cleanup to ToolRegistry — it handles
+  -- groups, in_use, schemas, context items, and tool messages in one call
+  if chat.tool_registry and chat.tool_registry.remove_group then chat.tool_registry:remove_group(group_name) end
 
+  -- Remove agent-specific messages that ToolRegistry doesn't know about
   if chat.messages then
     chat.messages = vim
       .iter(chat.messages)
       :filter(function(msg)
         if msg._meta and msg._meta.tag == "agent_system_prompt" then return false end
-        if msg.context and msg.context.id == group_id then return false end
-        if msg._meta and msg._meta.tag == "tool" and msg.context and msg.context.id then
-          if old_tool_ids[msg.context.id] then return false end
-        end
         if msg._meta and msg._meta.agent == old_agent_name then return false end
         return true
       end)
       :totable()
-  end
-
-  if chat.context_items then
-    chat.context_items = vim
-      .iter(chat.context_items)
-      :filter(function(item)
-        if item.id == group_id then return false end
-        if old_tool_ids[item.id] then return false end
-        return true
-      end)
-      :totable()
-  end
-
-  if chat.tool_registry then
-    for _, tool_name in ipairs(old_tools) do
-      chat.tool_registry.in_use[tool_name] = nil
-      local tool_id = "<tool>" .. tool_name .. "</tool>"
-      chat.tool_registry.schemas[tool_id] = nil
-    end
   end
 end
 

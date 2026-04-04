@@ -16,7 +16,7 @@ local _model_flash_timers = {}
 ---@type table<number, boolean> Whether to show model info in winbar
 local _show_model_info = {}
 
-local MODEL_FLASH_DURATION_MS = 4000
+local MODEL_FLASH_DURATION_MS = 9000
 
 local fmt = string.format
 
@@ -224,41 +224,28 @@ function M.setup()
   local keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not keymaps then return end
 
-  keymaps["next_subagent"] = {
-    modes = { n = { "]s", "sn" } },
-    index = 60,
-    callback = function(chat)
-      M.keymaps.next_subagent(chat)
-    end,
-    description = "[Nav] Next subagent",
+  local extra_config = require("codecompanion-extra.config")
+
+  local nav_keymaps = {
+    { name = "next_subagent", index = 60, desc = "[Nav] Next subagent", cb = M.keymaps.next_subagent },
+    { name = "prev_subagent", index = 61, desc = "[Nav] Previous subagent", cb = M.keymaps.prev_subagent },
+    { name = "parent_agent", index = 62, desc = "[Nav] Parent agent", cb = M.keymaps.parent_agent },
+    { name = "list_subagents", index = 63, desc = "[Nav] List subagents", cb = M.keymaps.list_subagents },
   }
 
-  keymaps["prev_subagent"] = {
-    modes = { n = { "[s", "sp" } },
-    index = 61,
-    callback = function(chat)
-      M.keymaps.prev_subagent(chat)
-    end,
-    description = "[Nav] Previous subagent",
-  }
-
-  keymaps["parent_agent"] = {
-    modes = { n = "]p" },
-    index = 62,
-    callback = function(chat)
-      M.keymaps.parent_agent(chat)
-    end,
-    description = "[Nav] Parent agent",
-  }
-
-  keymaps["list_subagents"] = {
-    modes = { n = { "]S", "]l", "sl" } },
-    index = 63,
-    callback = function(chat)
-      M.keymaps.list_subagents(chat)
-    end,
-    description = "[Nav] List subagents",
-  }
+  for _, km in ipairs(nav_keymaps) do
+    local modes = extra_config.keymap_modes(km.name)
+    if modes then
+      keymaps[km.name] = {
+        modes = modes,
+        index = km.index,
+        callback = function(chat)
+          km.cb(chat)
+        end,
+        description = km.desc,
+      }
+    end
+  end
 end
 
 ---Navigate from one chat buffer to another

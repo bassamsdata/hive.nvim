@@ -56,6 +56,7 @@ M.agents = {
       "todowrite",
       "todoread",
       "prune",
+      "swarm",
     },
     permissions = {
       can_spawn_subagents = true,
@@ -88,6 +89,8 @@ M.agents = {
       "ask_user",
       "list_directory",
       "prune",
+      "fetch_webpage",
+      "web_search",
     },
     permissions = {
       can_spawn_subagents = true,
@@ -277,6 +280,8 @@ CRITICAL OUTPUT RULES:
       "grep_search",
       "file_search",
       "list_directory",
+      -- TODO: we need to remove this tool when we add path(dir) to the grep_search and file_search tools.
+      "cmd_runner",
     },
     permissions = {
       can_spawn_subagents = false,
@@ -316,9 +321,20 @@ You function as an on-demand specialist invoked when complex analysis or archite
 - **Action plan**: Numbered steps for implementation
 - **Effort estimate**: Using the Quick/Short/Medium/Large scale
 
-**Expanded** (when relevant):
+**Expanded** (include when trade-offs are non-obvious or risk of wrong choice is high):
 - **Why this approach**: Brief reasoning and key trade-offs
 - **Watch out for**: Risks, edge cases, and mitigation strategies
+
+## Truth Protocol
+
+If information is insufficient to give a concrete recommendation:
+- State what's missing and why it matters
+- Provide best-effort guidance with assumptions explicitly marked as "ASSUMPTION:"
+- Never fabricate file paths, function names, or code not provided in context
+- If you need to inspect code before answering, use your read-only tools first
+
+## Tool Usage
+You have read-only tools. Use them to read files or search for patterns referenced in the question before answering. Do not guess at code you haven't read.
 
 Deliver actionable insight, not exhaustive analysis. Dense and useful beats long and thorough.]],
     opts = {
@@ -342,6 +358,7 @@ Deliver actionable insight, not exhaustive analysis. Dense and useful beats long
       "grep_search",
       "file_search",
       "get_diagnostics",
+      "list_directory",
     },
     permissions = {
       can_spawn_subagents = false,
@@ -505,6 +522,90 @@ Focus on measurable impact. Avoid premature optimization recommendations.]],
       auto_submit_success = true,
     },
   },
+
+  -- ============================================================================
+  -- Swarm Worker Subagent
+  -- ============================================================================
+
+  swarm_worker = {
+    type = "subagent",
+    name = "swarm_worker",
+    display_name = "Swarm Worker",
+    description = "Persistent swarm worker that claims and completes tasks from a shared queue",
+    icon = "󰾡",
+    is_swarm = true,
+    tools = {
+      "read_file",
+      "grep_search",
+      "file_search",
+      "list_directory",
+      "insert_edit_into_file",
+      "create_file",
+      "delete_file",
+      "get_diagnostics",
+      "cmd_runner",
+      "claim_task",
+      "complete_task",
+      "release_task",
+      "lock_file",
+      "unlock_file",
+      "send_update",
+      "send_to_peer",
+      "read_messages",
+      "get_swarm_status",
+    },
+    permissions = {
+      can_spawn_subagents = false,
+      can_edit_files = true,
+      can_run_commands = true,
+    },
+    system_prompt = [[You are a swarm worker agent — one of several autonomous agents working in parallel on a shared task queue.
+
+MANDATORY WORKFLOW (execute in order, no deviations):
+1. Call `read_messages` and process ALL messages
+   - If STOP message received: finish current work, call `complete_task`, then STOP
+   - Process urgent messages immediately before claiming new tasks
+2. Call `claim_task` with your category
+   - If no task available: you are COMPLETE — stop working
+   - If claim succeeds: proceed to step 3
+3. Before editing ANY file, call `lock_file(path)`
+   - If lock fails: retry up to 2 more times, then call `release_task(reason="blocked")` and return to step 1
+4. Execute the task using your available tools
+   - If any tool fails after 2 retries: call `release_task(reason="cannot_complete")` and return to step 1
+5. Call `unlock_file(path)` for ALL locked files immediately after editing
+   - Release locks even if the task failed
+6. Call `complete_task` with a brief result summary
+7. Return to step 1
+
+COMMUNICATION:
+- Call `read_messages` BEFORE each new task claim (step 1)
+- Use `send_update` for: completed milestones, blocking issues, unexpected errors
+- Use `send_to_peer` to coordinate with other agents when tasks overlap
+- Progress updates: 1-2 sentences, focus on what was done and what's next
+
+LOCKING RULES:
+- NEVER edit a file without acquiring its lock first
+- ALWAYS release locks before: completing a task, releasing a task, or claiming a new task
+- If `lock_file` fails, another agent owns that file — do not retry indefinitely
+
+ERROR HANDLING:
+- Tool failures: retry once, then release task if still failing
+- Lock failures: release task with reason "blocked", move to next task
+- Ambiguous requirements: use `send_to_peer` or `send_update` to ask for clarification
+- Never hang — if stuck, release task and move on
+
+TASK DEPENDENCIES:
+- Some tasks may be blocked by uncompleted dependencies
+- `claim_task` will skip tasks whose dependencies are not yet complete
+- If no tasks are claimable but tasks exist, wait briefly then check again]],
+    opts = {
+      include_default_system_prompt = false,
+      include_tools_system_prompt = true,
+      hidden = true,
+      auto_submit_errors = true,
+      auto_submit_success = true,
+    },
+  },
 }
 
 ---Get an agent definition by name
@@ -553,7 +654,7 @@ function M.get_tools(agent_name)
 end
 
 ---Get list of subagent names (for task tool enum)
----@param filter? { advisor?: boolean } Optional filter
+---@param filter? { advisor?: boolean, swarm?: boolean } Optional filter
 ---@return string[]
 function M.get_subagent_names(filter)
   filter = filter or {}
@@ -561,14 +662,15 @@ function M.get_subagent_names(filter)
   for name, agent in pairs(M.agents) do
     if agent.type == "subagent" then
       -- Filter by advisor flag if specified
-      if filter.advisor == nil then
-        -- No filter, include all subagents
-        table.insert(names, name)
-      elseif filter.advisor == true and agent.is_advisor then
-        table.insert(names, name)
-      elseif filter.advisor == false and not agent.is_advisor then
-        table.insert(names, name)
-      end
+      if filter.advisor == true and not agent.is_advisor then goto continue end
+      if filter.advisor == false and agent.is_advisor then goto continue end
+
+      -- Filter by swarm flag if specified
+      if filter.swarm == true and not agent.is_swarm then goto continue end
+      if filter.swarm == false and agent.is_swarm then goto continue end
+
+      table.insert(names, name)
+      ::continue::
     end
   end
   table.sort(names)
@@ -581,10 +683,16 @@ function M.get_advisor_names()
   return M.get_subagent_names({ advisor = true })
 end
 
----Get list of task subagent names (non-advisor subagents)
+---Get list of task subagent names (non-advisor, non-swarm subagents)
 ---@return string[]
 function M.get_task_subagent_names()
-  return M.get_subagent_names({ advisor = false })
+  return M.get_subagent_names({ advisor = false, swarm = false })
+end
+
+---Get list of swarm agent names
+---@return string[]
+function M.get_swarm_names()
+  return M.get_subagent_names({ swarm = true })
 end
 
 ---Register a custom agent

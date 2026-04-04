@@ -174,7 +174,7 @@ function M.activate_and_submit(args)
   }, { visible = true })
 
   hierarchy.start_timer(args.child_chat.bufnr)
-  args.child_chat:submit()
+  args.child_chat:submit({ auto_submit = true })
 
   return true
 end

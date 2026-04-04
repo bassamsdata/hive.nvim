@@ -18,6 +18,7 @@ local PRUNED_PLACEHOLDER = "[Output pruned to save context - information superse
 ---@field _pruned_ids table<number, table<string, boolean>> bufnr → set of pruned call_ids
 ---@field _config table
 ---@field _protected_set table<string, boolean> set of protected tool names
+---@field _last_injected_tokens table<number, number> bufnr → total prunable tokens at last injection
 local PruningManager = {}
 PruningManager.__index = PruningManager
 
@@ -28,11 +29,14 @@ function PruningManager.new(config)
   self._pruned_ids = {}
   self._config = vim.tbl_deep_extend("force", {
     protected_tools = { "prune", "task", "todowrite", "todoread", "consult", "ask_user" },
+    min_tokens = 5000,
+    delta_tokens = 3000,
   }, config or {})
   self._protected_set = {}
   for _, name in ipairs(self._config.protected_tools) do
     self._protected_set[name] = true
   end
+  self._last_injected_tokens = {}
   return self
 end
 
@@ -63,9 +67,17 @@ function PruningManager:_build_call_id_map(messages)
     if msg.tools and msg.tools.calls then
       for _, call in ipairs(msg.tools.calls) do
         if call["function"] and call["function"].name then
+          local raw_args = call["function"].arguments
+          local parsed_args
+          if type(raw_args) == "table" then
+            parsed_args = raw_args
+          elseif type(raw_args) == "string" and raw_args ~= "" then
+            local ok, decoded = pcall(vim.json.decode, raw_args)
+            if ok and type(decoded) == "table" then parsed_args = decoded end
+          end
           local entry = {
             name = call["function"].name,
-            args = type(call["function"].arguments) == "table" and call["function"].arguments or nil,
+            args = parsed_args,
           }
           if call.id then map[call.id] = entry end
           -- OpenAI Responses API: call_id is the actual function call identifier
@@ -88,13 +100,19 @@ function PruningManager:_build_call_id_map(messages)
 end
 
 ---Extract a description from tool call arguments
+---Includes parent/filename for file-related tools so the LLM can identify what it read
 ---@param tool_name string
 ---@param args table?
 ---@return string
 function PruningManager:_extract_description(tool_name, args)
   if args then
     local filepath = args.filepath or args.path or args.file
-    if filepath then return tool_name .. ", " .. filepath end
+    if filepath then
+      local parent = vim.fs.basename(vim.fs.dirname(filepath))
+      local base = vim.fs.basename(filepath)
+      local short = parent and base and (parent .. "/" .. base) or base or filepath
+      return tool_name .. ", " .. short
+    end
     local query = args.query or args.cmd or args.command or args.name
     if query then return tool_name .. ", " .. tostring(query) end
   end
@@ -173,8 +191,9 @@ end
 ---Build the <prunable-tools> XML string
 ---@param messages table[]
 ---@param bufnr number
+---@param eval? ContextLifecycle.Evaluation Optional evaluation for nudge injection
 ---@return string
-function PruningManager:build_prunable_list(messages, bufnr)
+function PruningManager:build_prunable_list(messages, bufnr, eval)
   local entries = self:scan_messages(messages, bufnr)
   if #entries == 0 then return "" end
 
@@ -183,13 +202,38 @@ function PruningManager:build_prunable_list(messages, bufnr)
     table.insert(lines, string.format("%d: %s (~%d tokens)", entry.numeric_id, entry.description, entry.token_estimate))
   end
 
+  local utilization = ""
+  if eval and eval.context_window and eval.context_window > 0 then
+    utilization = string.format(
+      "\nContext: %dk / %dk tokens (%d%% used)",
+      math.floor(eval.estimated_tokens / 1000),
+      math.floor(eval.context_window / 1000),
+      math.floor(eval.percentage)
+    )
+  end
+
+  local nudge = ""
+  if eval and eval.urgency == "medium" then
+    nudge = string.format(
+      "\n⚠ Context window at %d%% (%dk/%dk tokens). Strongly recommend pruning large tool outputs to maintain conversation quality.",
+      math.floor(eval.percentage),
+      math.floor(eval.estimated_tokens / 1000),
+      math.floor(eval.context_window / 1000)
+    )
+  elseif eval and eval.urgency == "low" then
+    nudge = string.format(
+      "\nContext is at %d%%. Consider pruning tool outputs you no longer need.",
+      math.floor(eval.percentage)
+    )
+  end
+
   return string.format(
     [[<prunable-tools>
 The following tool outputs are in your context and eligible for pruning. Reference by numeric ID.
 %s
 </prunable-tools>]],
     table.concat(lines, "\n")
-  )
+  ) .. utilization .. nudge
 end
 
 ---Execute pruning: map numeric IDs to call_ids, mutate messages in-place
@@ -238,23 +282,66 @@ function PruningManager:prune(chat, numeric_ids)
   }
 end
 
----Find or create the prunable-context tagged message and update it
+---Find a safe insertion point before the last contiguous assistant+tool block.
+---Walks backward past tool messages, then past the preceding LLM message
+---that triggered them (to avoid splitting an LLM{tool_calls}→tool sequence).
+---Returns #messages + 1 when the tail has no tool messages (i.e. append).
+---@param messages table[]
+---@return number
+local function _tool_tail_start(messages)
+  local i = #messages
+  while i >= 1 and messages[i].role == "tool" do
+    i = i - 1
+  end
+  -- If the message just before the tool run is an LLM/assistant with tool_calls,
+  -- step past it so we don't inject between it and its tool responses.
+  if i >= 1 and messages[i].tools and messages[i].tools.calls then i = i - 1 end
+  return i + 1
+end
+
+---Find or create the prunable-context tagged message and update it.
+---Removes stale message only if near the tail (within last TAIL_WINDOW messages)
+---to avoid breaking cache prefix for messages deep in history.
+---Inserts before the last tool-message run so adapters (Copilot) that inspect
+---messages[#messages].role still see "tool" at the tail during agentic loops.
 ---@param chat table The chat object
-function PruningManager:update_prunable_message(chat)
+---@param eval? ContextLifecycle.Evaluation Optional evaluation for nudge injection
+---@param opts? { force?: boolean } force=true bypasses thresholds (used after prune execution)
+function PruningManager:update_prunable_message(chat, eval, opts)
+  opts = opts or {}
   local messages = chat.messages
   local bufnr = chat.bufnr
   _debug(string.format("update_prunable_message: bufnr=%s msg_count=%d", tostring(bufnr), #messages))
-  local prunable_list = self:build_prunable_list(messages, bufnr)
 
-  for i, msg in ipairs(messages) do
-    if msg._meta and msg._meta.tag == PRUNABLE_TAG then
-      if prunable_list ~= "" then
-        msg.content = prunable_list
-        msg._meta.estimated_tokens = math.floor(#prunable_list / 4)
-      else
-        table.remove(messages, i)
-      end
-      return
+  local entries = self:scan_messages(messages, bufnr)
+  local total_tokens = 0
+  for _, entry in ipairs(entries) do
+    total_tokens = total_tokens + entry.token_estimate
+  end
+
+  local last_tokens = self._last_injected_tokens[bufnr] or 0
+  local delta = math.abs(total_tokens - last_tokens)
+  local below_min = total_tokens < self._config.min_tokens
+  local below_delta = delta < self._config.delta_tokens
+
+  if not opts.force and below_min then
+    _debug(string.format("  skip: total_tokens=%d < min=%d", total_tokens, self._config.min_tokens))
+    return
+  end
+
+  if not opts.force and last_tokens > 0 and below_delta then
+    _debug(string.format("  skip: delta=%d < threshold=%d", delta, self._config.delta_tokens))
+    return
+  end
+
+  local prunable_list = self:build_prunable_list(messages, bufnr, eval)
+
+  local TAIL_WINDOW = 15
+  local search_start = math.max(1, #messages - TAIL_WINDOW)
+  for i = #messages, search_start, -1 do
+    if messages[i]._meta and messages[i]._meta.tag == PRUNABLE_TAG then
+      table.remove(messages, i)
+      break
     end
   end
 
@@ -262,13 +349,15 @@ function PruningManager:update_prunable_message(chat)
     local ok, cc_config = pcall(require, "codecompanion.config")
     if not ok then return end
 
+    local insert_at = _tool_tail_start(messages)
     chat:add_message({
-      role = cc_config.constants.SYSTEM_ROLE,
+      role = cc_config.constants.USER_ROLE,
       content = prunable_list,
     }, {
       visible = false,
-      _meta = { tag = PRUNABLE_TAG },
+      _meta = { tag = PRUNABLE_TAG, index = insert_at },
     })
+    self._last_injected_tokens[bufnr] = total_tokens
   end
 end
 
@@ -276,6 +365,7 @@ end
 ---@param bufnr number
 function PruningManager:clear_buffer(bufnr)
   self._pruned_ids[bufnr] = nil
+  self._last_injected_tokens[bufnr] = nil
 end
 
 ---Setup autocmd listeners for context injection
@@ -289,6 +379,10 @@ function PruningManager:setup_events()
       local bufnr = event.data and event.data.bufnr
       if not bufnr then return end
       _debug(string.format("event: %s bufnr=%d", event.match, bufnr))
+
+      -- Skip if context lifecycle manager is active (it handles prunable updates with nudges)
+      local cl_ok, context_lifecycle = pcall(require, "codecompanion-extra.context_lifecycle")
+      if cl_ok and context_lifecycle.instance and context_lifecycle.instance() then return end
 
       local h_ok, hierarchy = pcall(require, "codecompanion-extra.agents.hierarchy")
       if h_ok and hierarchy.get_session then

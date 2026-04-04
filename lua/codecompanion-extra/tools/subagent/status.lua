@@ -17,13 +17,20 @@ function M.detect_highlight(line, icons, agent_icons)
   local HIGHLIGHTS = utils.HIGHLIGHTS
   icons = icons or utils.STATUS_ICONS
 
-  if line:match("^───") then return HIGHLIGHTS.header end
+  if line:match("^───") or line:match("^═══") then return HIGHLIGHTS.header end
 
   if agent_icons then
     for _, icon in ipairs(agent_icons) do
       if icon ~= "" and line:find(icon, 1, true) then return HIGHLIGHTS.agent end
     end
   end
+
+  -- Swarm agent status line detection
+  if line:match("^%s+.+: working") then return HIGHLIGHTS.running end
+  if line:match("^%s+.+: idle") then return HIGHLIGHTS.info end
+  if line:match("^%s+.+: completed") then return HIGHLIGHTS.success end
+  if line:match("^%s+.+: failed") then return HIGHLIGHTS.error end
+  if line:match("^%s+.+: waiting") then return HIGHLIGHTS.info end
 
   if line:match("Running") or line:match("Working") or line:match("Starting") then
     return HIGHLIGHTS.running

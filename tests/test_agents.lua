@@ -204,6 +204,22 @@ local T = new_set({
             return self
           end
 
+          function chat.tool_registry:remove_group(group_name)
+            local tools = self.groups[group_name]
+            if not tools then return end
+
+            for _, tool_name in ipairs(tools) do
+              self.in_use[tool_name] = nil
+              self.schemas["<tool>" .. tool_name .. "</tool>"] = nil
+            end
+            self.groups[group_name] = nil
+
+            chat.context_items = vim.iter(chat.context_items):filter(function(item)
+              if item.id == "<group>" .. group_name .. "</group>" then return false end
+              return true
+            end):totable()
+          end
+
           function chat.tool_registry:add(tool_name)
             self.in_use[tool_name] = true
             self.schemas["<tool>" .. tool_name .. "</tool>"] = { name = tool_name }

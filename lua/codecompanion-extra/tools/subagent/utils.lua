@@ -11,8 +11,12 @@ local M = {}
 -- ============================================================================
 
 M.SPINNER_FRAMES = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
-M.UPDATE_INTERVAL_MS = 100
-M.IDLE_TIMEOUT_MS = 120000 -- 2 minutes of no tool activity
+M.UPDATE_INTERVAL_MS = 120
+-- TODO: this is to allow slow models to write, but we need better mechanism.
+-- to check if the model still active (streaming/working like every minute)
+M.IDLE_TIMEOUT_MS = 240000 -- 4 minutes of no tool activity
+
+M.KEYMAP_HINTS = "]s next · [s prev · ]p parent"
 
 M.HIGHLIGHTS = {
   header = "Title",

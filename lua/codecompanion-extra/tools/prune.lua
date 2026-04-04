@@ -11,7 +11,6 @@ THE PRUNE TOOL
 - **Noise**: irrelevant or unhelpful tool outputs
 - **Superseded data**: older outputs replaced by newer reads/searches
 - **Wrong targets**: files or searches that turned out to be irrelevant
-- When you read files only to verify that they contain the correct content or fix, or when you use `get_changed_files` merely to check for changes without actually needing to reference the file contents.
 
 A `<prunable-tools>` section appears in your context showing eligible outputs. Each line reads `ID: tool, parameter (~token count)`. Reference outputs by their numeric ID — these are your ONLY valid targets.
 
@@ -22,18 +21,36 @@ CRITICAL ID RULES:
 - If no `<prunable-tools>` section exists, there is NOTHING to prune — do not call the tool
 - BEFORE calling prune, quote the specific IDs you see in `<prunable-tools>` to verify
 
-BATCH WISELY: Accumulate several candidates before pruning. Don't prune one tiny output alone.
-
 DO NOT PRUNE WHEN:
 - You plan to edit the file or reference the output for implementation
 - You might need to re-examine the original content
 - You are uncertain whether the data will be needed
 
-Ask: "Is this noise, or will it serve me?" If the latter, keep it. Pruning that forces re-fetching is a net loss.
+Pruning that forces re-fetching is a net loss.
 
-TIMING: Prefer managing context at the START of a new turn (after receiving a user message) rather than at the END of your previous turn. At turn start you have fresh signal about what the user needs next.
+TIMING — TWO RULES:
+1. NEVER prune a tool output in the same response where you called that tool.
+   If you just called read_file, get_changed_files, or any tool — its output is
+   OFF LIMITS for pruning in this response. Evaluate it for pruning on your NEXT turn.
+2. Prune ONLY after receiving a new user message. The user message is your signal
+   that the previous phase is done and you can assess what's still needed.
 
-PARALLELISE: Avoid calling ONLY context management tools in your response. Combine prune with other relevant tools when possible.
+VIOLATION TEST: Before calling prune, ask: "Did I generate any of these outputs
+THIS turn?" If yes, remove those IDs from your prune list.
+
+VERIFY-AND-PRUNE PATTERN:
+When you call a tool purely to verify/confirm (not to extract data for implementation):
+1. State your verification conclusion in chat text FIRST (e.g., "Changes verified —
+   all 3 files updated correctly")
+2. On your NEXT turn, prune that verification output immediately
+
+Common verify-only tools: get_changed_files (checking edits look right), read_file
+(confirming a fix landed), get_diagnostics (confirming zero errors). If you called
+these to CHECK rather than to LEARN, the output is disposable after you've stated
+your conclusion.
+
+BATCH WISELY: Accumulate several candidates before pruning. Don't prune one tiny output alone.
+PARALLELISE: Combine prune with other tool calls when possible — never call ONLY prune.
 </instruction>
 
 <instruction name=injected_context_handling policy_level=critical>
@@ -132,7 +149,7 @@ return {
 
       local result = manager:prune(chat, numeric_ids)
 
-      manager:update_prunable_message(chat)
+      manager:update_prunable_message(chat, nil, { force = true })
 
       local parts = {}
       table.insert(parts, fmt("Pruned %d tool output(s), saving ~%d tokens.", result.pruned, result.tokens_saved))

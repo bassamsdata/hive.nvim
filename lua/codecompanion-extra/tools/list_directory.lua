@@ -14,10 +14,16 @@ local fmt = string.format
 local function list_dir(args, opts)
   opts = opts or {}
   local path = args.path
-  local depth = args.depth or 1
+  local depth = args.depth
   local pattern = args.pattern
   local show_hidden = args.hidden or false
 
+  -- Handle string "null"/"nil" from LLM JSON, and empty string as "no value"
+  if type(depth) == "string" and (depth == "nil" or depth == "null" or depth == "") then depth = nil end
+  if type(pattern) == "string" and (pattern == "nil" or pattern == "null" or pattern == "") then pattern = nil end
+  if type(show_hidden) == "string" and (show_hidden == "nil" or show_hidden == "null") then show_hidden = false end
+
+  depth = depth or 1
   if not path or path == "" then path = "." end
 
   local full_path
@@ -137,7 +143,7 @@ For finding files by pattern across the codebase, prefer file_search or grep_sea
           },
           pattern = {
             type = "string",
-            description = "Optional Lua pattern to filter results. Only entries matching this pattern will be shown. Example: '%.lua$' for Lua files, '^test' for entries starting with 'test'.",
+            description = "Optional Lua pattern to filter results. Only entries matching this pattern will be shown. Example: '%.lua$' for Lua files, '^test' for entries starting with 'test'. Use empty string \"\" if you don't want to filter by pattern.",
           },
           hidden = {
             type = "boolean",

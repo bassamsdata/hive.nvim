@@ -180,6 +180,7 @@ local function build_status_text(state, spinner_char)
   end
 
   table.insert(lines, fmt("  %s %s", utils.STATUS_ICONS.timer, elapsed_str))
+  table.insert(lines, "  " .. utils.KEYMAP_HINTS)
   table.insert(lines, "───────────────────────────────")
 
   return table.concat(lines, "\n")
@@ -646,7 +647,7 @@ local function send_followup(state, message, callback)
     content = message,
   }, { visible = true })
 
-  state.child_chat:submit()
+  state.child_chat:submit({ auto_submit = true })
 end
 
 -- ============================================================================
@@ -748,11 +749,11 @@ Unlike task delegation (for work completion), consult is for getting expert opin
           },
           follow_up = {
             type = "boolean",
-            description = "Set to true to send a follow-up question to an existing consultation (requires consultation_id)",
+            description = "Set to true to send a follow-up question to an existing consultation (requires consultation_id). Only include this field when sending a follow-up.",
           },
           consultation_id = {
             type = "string",
-            description = "The ID of a previous consultation to send a follow-up to (returned in previous consultation result)",
+            description = "The ID of a previous consultation to send a follow-up to (returned in previous consultation result). Only include this field when follow_up is true.",
           },
         },
         required = { "advisor_type", "question", "description" },

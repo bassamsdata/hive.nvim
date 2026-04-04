@@ -92,14 +92,14 @@ end
 ---@return { bufnr: number, winnr: number }
 function AskUserForm:_create_window(config)
   local bufnr = api.nvim_create_buf(false, true)
-  api.nvim_set_option_value("buftype", "nofile", { buf = bufnr })
-  api.nvim_set_option_value("bufhidden", "wipe", { buf = bufnr })
-  api.nvim_set_option_value("swapfile", false, { buf = bufnr })
+  local set_option = api.nvim_set_option_value
+  set_option("buftype", "nofile", { buf = bufnr })
+  set_option("bufhidden", "wipe", { buf = bufnr })
+  set_option("swapfile", false, { buf = bufnr })
   api.nvim_buf_set_name(bufnr, config.name)
   vim.b[bufnr].miniindentscope_disable = true
 
-  if config.filetype then api.nvim_set_option_value("filetype", config.filetype, { buf = bufnr }) end
-
+  if config.filetype then set_option("filetype", config.filetype, { buf = bufnr }) end
   local winnr = api.nvim_open_win(bufnr, config.focusable, {
     relative = "editor",
     width = config.width,
@@ -113,9 +113,9 @@ function AskUserForm:_create_window(config)
     focusable = config.focusable,
   })
 
-  if config.winhighlight then api.nvim_set_option_value("winhighlight", config.winhighlight, { win = winnr }) end
-  api.nvim_set_option_value("wrap", true, { win = winnr })
-  api.nvim_set_option_value("cursorline", false, { win = winnr })
+  if config.winhighlight then set_option("winhighlight", config.winhighlight, { win = winnr }) end
+  set_option("wrap", true, { win = winnr })
+  set_option("cursorline", false, { win = winnr })
 
   return { bufnr = bufnr, winnr = winnr }
 end
@@ -728,21 +728,22 @@ function AskUserForm:_setup_keymaps()
   local opts = { buffer = self.bufnr, nowait = true, silent = true }
 
   -- stylua: ignore start
-  vim.keymap.set("n", "<Tab>",   function() self:next_question() end, opts)
-  vim.keymap.set("n", "<S-Tab>", function() self:prev_question() end, opts)
-  vim.keymap.set("n", "j",       function() self:next_choice() end,   opts)
-  vim.keymap.set("n", "<Down>",  function() self:next_choice() end,   opts)
-  vim.keymap.set("n", "k",       function() self:prev_choice() end,   opts)
-  vim.keymap.set("n", "<Up>",    function() self:prev_choice() end,   opts)
-  vim.keymap.set("n", "<CR>",    function() self:handle_select() end, opts)
-  vim.keymap.set("n", "<Space>", function() self:handle_select() end, opts)
-  vim.keymap.set("n", "q",       function() self:cancel() end,        opts)
-  vim.keymap.set("n", "S",       function() self:submit() end,        opts)
-  vim.keymap.set("n", "<C-s>",   function() self:submit() end,        opts)
-  vim.keymap.set("n", "H",       function() self:hide() end,          opts)
+  local key = vim.keymap.set
+  key("n", "<Tab>",   function() self:next_question() end, opts)
+  key("n", "<S-Tab>", function() self:prev_question() end, opts)
+  key("n", "j",       function() self:next_choice() end,   opts)
+  key("n", "<Down>",  function() self:next_choice() end,   opts)
+  key("n", "k",       function() self:prev_choice() end,   opts)
+  key("n", "<Up>",    function() self:prev_choice() end,   opts)
+  key("n", "<CR>",    function() self:handle_select() end, opts)
+  key("n", "<Space>", function() self:handle_select() end, opts)
+  key("n", "q",       function() self:cancel() end,        opts)
+  key("n", "S",       function() self:submit() end,        opts)
+  key("n", "<C-s>",   function() self:submit() end,        opts)
+  key("n", "H",       function() self:hide() end,          opts)
   -- stylua: ignore end
 
-  vim.keymap.set("n", "R", function()
+  key("n", "R", function()
     local form = self
     vim.ui.input({
       prompt = "Rejection reason (optional): ",
@@ -802,14 +803,19 @@ end
 ---Called from agents/init.lua during setup
 ---@return nil
 local function setup_chat_keymap()
+  local extra_config = require("codecompanion-extra.config")
+
   local ok, cc_config = pcall(require, "codecompanion.config")
   if not ok then return end
 
   local keymaps = cc_config.interactions and cc_config.interactions.chat and cc_config.interactions.chat.keymaps
   if not keymaps then return end
 
+  local modes = extra_config.keymap_modes("toggle_ask_user")
+  if not modes then return end
+
   keymaps["toggle_ask_user"] = {
-    modes = { n = { "gH", "sq", "]q" } },
+    modes = modes,
     index = 55,
     description = "[Ask] Toggle ask_user form",
     callback = function()

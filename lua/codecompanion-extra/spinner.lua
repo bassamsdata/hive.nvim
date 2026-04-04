@@ -2,6 +2,7 @@
 -- Renders a floating window with status, adapter info, and subagent progress
 
 local state = require("codecompanion-extra.state")
+local debug = state.debug_log
 
 local api = vim.api
 local uv = vim.uv
@@ -68,6 +69,7 @@ local CONSTANTS = {
     SpinnerProvider = "DiagnosticHint",
     SpinnerSubagent = "DiagnosticWarn",
     SpinnerConnector = "NonText",
+    CCExtraAgentName = "Title",
   },
 }
 
@@ -903,8 +905,22 @@ function M.setup(user_config)
       if bufnr and _spinner_instance:_is_child_bufnr(bufnr) then return end
       if args.match == "CodeCompanionToolStarted" then
         manager:on_tool_started(bufnr, args.data and (args.data.name or args.data.tool) or "unknown")
+        debug(
+          string.format(
+            "event: CodeCompanionToolStarted -> on_tool_started(bufnr=%d, tool=%s)",
+            bufnr or "nil",
+            args.data and (args.data.name or args.data.tool) or "unknown"
+          )
+        )
       elseif args.match == "CodeCompanionToolFinished" then
         manager:on_tool_finished(bufnr, args.data and (args.data.name or args.data.tool) or "unknown")
+        debug(
+          string.format(
+            "event: CodeCompanionToolFinished -> on_tool_finished(bufnr=%d, tool=%s)",
+            bufnr or "nil",
+            args.data and (args.data.name or args.data.tool) or "unknown"
+          )
+        )
       end
       _spinner_instance:_ensure_ui_visible()
     end,
@@ -934,28 +950,54 @@ function M.setup(user_config)
       local handlers = {
         CodeCompanionChatSubmitted = function()
           manager:on_chat_submitted(bufnr)
+          debug(
+            string.format(
+              "event: CodeCompanionChatSubmitted -> on_chat_submitted(bufnr=%d, data=%s)",
+              bufnr,
+              vim.inspect(data)
+            )
+          )
         end,
         CodeCompanionChatDone = function()
           manager:on_chat_done(bufnr)
+          debug(string.format("event: CodeCompanionChatDone -> on_chat_done(bufnr=%d)", bufnr))
         end,
         CodeCompanionChatStopped = function()
           manager:on_chat_stopped(bufnr)
+          debug(string.format("event: CodeCompanionChatStopped -> on_chat_stopped(bufnr=%d)", bufnr))
         end,
         CodeCompanionChatClosed = function()
           manager:on_chat_stopped(bufnr)
           manager:on_chat_closed(bufnr)
+          debug(string.format("event: CodeCompanionChatClosed -> on_chat_stopped + on_chat_closed(bufnr=%d)", bufnr))
         end,
         CodeCompanionChatOpened = function()
           manager:on_chat_opened(bufnr)
+          debug(string.format("event: CodeCompanionChatOpened -> on_chat_opened(bufnr=%d)", bufnr))
         end,
         CodeCompanionChatCreated = function()
           manager:on_chat_opened(bufnr)
+          debug(string.format("event: CodeCompanionChatCreated -> on_chat_opened(bufnr=%d)", bufnr))
         end,
         CodeCompanionChatAdapter = function()
           manager:on_chat_adapter(bufnr, data.adapter)
+          debug(
+            string.format(
+              "event: CodeCompanionChatAdapter -> on_chat_adapter(bufnr=%d, adapter=%s)",
+              bufnr,
+              data.adapter or "nil"
+            )
+          )
         end,
         CodeCompanionChatModel = function()
           manager:on_chat_model(bufnr, data.model or data.adapter)
+          debug(
+            string.format(
+              "event: CodeCompanionChatModel -> on_chat_model(bufnr=%d, model=%s)",
+              bufnr,
+              data.model or data.adapter or "nil"
+            )
+          )
         end,
       }
 
@@ -981,17 +1023,33 @@ function M.setup(user_config)
         -- Redundant safety: inline tracking is primarily via RequestStarted/Finished
         -- with interaction="inline", but InlineFinished ensures cleanup if missed
         manager:on_inline_finished()
+        debug("event: CodeCompanionInlineFinished -> on_inline_finished()")
       elseif args.match == "CCExtraSubagentStarted" then
         manager:on_subagent_started(
           args.data and args.data.parent_bufnr,
           args.data and args.data.child_bufnr,
           args.data or {}
         )
+        debug(
+          string.format(
+            "event: CCExtraSubagentStarted -> on_subagent_started(parent=%s, child=%s)",
+            args.data and args.data.parent_bufnr or "nil",
+            args.data and args.data.child_bufnr or "nil"
+          )
+        )
       elseif args.match == "CCExtraSubagentProgress" then
         manager:on_subagent_progress(
           args.data and args.data.parent_bufnr,
           args.data and args.data.child_bufnr,
           args.data and args.data.tool_count
+        )
+        debug(
+          string.format(
+            "event: CCExtraSubagentProgress -> on_subagent_progress(parent=%s, child=%s, tools=%s)",
+            args.data and args.data.parent_bufnr or "nil",
+            args.data and args.data.child_bufnr or "nil",
+            args.data and args.data.tool_count or "0"
+          )
         )
       elseif args.match == "CCExtraSubagentCompleted" then
         manager:on_subagent_completed(
@@ -1000,6 +1058,14 @@ function M.setup(user_config)
           args.data and args.data.status,
           args.data and args.data.duration_ms,
           args.data and args.data.tool_count
+        )
+        debug(
+          string.format(
+            "event: CCExtraSubagentCompleted -> on_subagent_completed(parent=%s, child=%s, status=%s)",
+            args.data and args.data.parent_bufnr or "nil",
+            args.data and args.data.child_bufnr or "nil",
+            args.data and args.data.status or "nil"
+          )
         )
       end
       _spinner_instance:_ensure_ui_visible()
