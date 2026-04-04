@@ -18,7 +18,7 @@ jobs:
         id: release
         with:
           release-type: simple
-          package-name: codecompanion-extra.nvim
+          package-name: hive.nvim
 
       - name: Checkout Repository 🛎️
         if: ${{ steps.release.outputs.release_created }}

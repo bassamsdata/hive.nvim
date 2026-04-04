@@ -11,12 +11,12 @@ local T = new_set({
       child.lua([[
         vim.opt.rtp:prepend(".")
 
-        package.loaded["codecompanion-extra.agents.navigation"] = {
+        package.loaded["hive.agents.navigation"] = {
           refresh_winbar = function() end,
         }
 
-        package.loaded["codecompanion-extra.agents.hierarchy"] = nil
-        require("codecompanion-extra.agents.hierarchy").clear()
+        package.loaded["hive.agents.hierarchy"] = nil
+        require("hive.agents.hierarchy").clear()
       ]])
     end,
     post_case = function()
@@ -29,7 +29,7 @@ T["hierarchy"] = new_set()
 
 T["hierarchy"]["tracks parent child sibling root and tree relationships"] = function()
   local summary = child.lua([[
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
+    local hierarchy = require("hive.agents.hierarchy")
     hierarchy.clear()
 
     hierarchy.create_session({
@@ -79,7 +79,7 @@ end
 
 T["hierarchy"]["tracks tool execution and status summaries"] = function()
   local summary = child.lua([[
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
+    local hierarchy = require("hive.agents.hierarchy")
     hierarchy.clear()
 
     hierarchy.create_session({
@@ -118,7 +118,7 @@ end
 
 T["hierarchy"]["removing a child updates parent and session state"] = function()
   local summary = child.lua([[
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
+    local hierarchy = require("hive.agents.hierarchy")
     hierarchy.clear()
 
     hierarchy.create_session({

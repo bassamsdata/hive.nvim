@@ -1,8 +1,8 @@
 -- API compatibility tests for codecompanion.nvim internals
--- Validates that the APIs codecompanion-extra depends on still exist and have
+-- Validates that the APIs hive depends on still exist and have
 -- the expected shape. Run via: make test-compat
 --
--- These tests catch breaking changes that affect codecompanion-extra:
+-- These tests catch breaking changes that affect hive:
 -- 1. Tool registration: how tools are configured in cc_config.interactions.chat.tools
 -- 2. Tool resolution: how Tools.resolve() discovers and loads tool definitions
 -- 3. Orchestrator signatures: how handler/output callbacks are invoked
@@ -283,12 +283,12 @@ T["Tools module"]["all extra tools resolve with required fields"] = function()
   local Tools = require("codecompanion.interactions.chat.tools")
 
   local tool_modules = {
-    { name = "get_diagnostics", mod = "codecompanion-extra.tools.get_diagnostics" },
-    { name = "list_directory", mod = "codecompanion-extra.tools.list_directory" },
-    { name = "ask_user", mod = "codecompanion-extra.tools.ask_user" },
-    { name = "cmd_runner", mod = "codecompanion-extra.tools.cmd_runner" },
-    { name = "consult", mod = "codecompanion-extra.tools.consult" },
-    { name = "task", mod = "codecompanion-extra.tools.task" },
+    { name = "get_diagnostics", mod = "hive.tools.get_diagnostics" },
+    { name = "list_directory", mod = "hive.tools.list_directory" },
+    { name = "ask_user", mod = "hive.tools.ask_user" },
+    { name = "cmd_runner", mod = "hive.tools.cmd_runner" },
+    { name = "consult", mod = "hive.tools.consult" },
+    { name = "task", mod = "hive.tools.task" },
   }
 
   for _, entry in ipairs(tool_modules) do
@@ -583,7 +583,7 @@ end
 T["Tool registration"]["_register_extra_tools produces resolvable tools"] = function()
   local Tools = require("codecompanion.interactions.chat.tools")
   local config = require("codecompanion.config")
-  local agents = require("codecompanion-extra.agents")
+  local agents = require("hive.agents")
 
   -- Snapshot keys before registration so we can identify what was added
   local before = {}
@@ -733,13 +733,13 @@ end
 T["Compat detection"] = new_set()
 
 T["Compat detection"]["compat module loads"] = function()
-  local ok, compat = require_ok("codecompanion-extra.tools.compat")
+  local ok, compat = require_ok("hive.tools.compat")
   expect.equality(ok, true)
   expect.equality(type(compat), "table")
 end
 
 T["Compat detection"]["is_new_api agrees with structural markers"] = function()
-  local compat = require("codecompanion-extra.tools.compat")
+  local compat = require("hive.tools.compat")
 
   -- Structural marker: cmd_tool factory only exists in new API
   local has_cmd_tool = pcall(require, "codecompanion.interactions.chat.tools.builtin.cmd_tool")
@@ -767,7 +767,7 @@ T["Compat detection"]["is_new_api agrees with structural markers"] = function()
 end
 
 T["Compat detection"]["handler_setup normalizes meta for current API"] = function()
-  local compat = require("codecompanion-extra.tools.compat")
+  local compat = require("hive.tools.compat")
   local Orchestrator = require("codecompanion.interactions.chat.tools.orchestrator")
 
   local inner_meta = nil

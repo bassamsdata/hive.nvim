@@ -28,19 +28,19 @@ local T = new_set({
         }
 
         package.loaded["codecompanion.interactions.chat.tools.builtin.cmd_tool"] = {}
-        package.loaded["codecompanion-extra.agents.navigation"] = {
+        package.loaded["hive.agents.navigation"] = {
           refresh_winbar = function() end,
         }
 
-        package.loaded["codecompanion-extra.tools.compat"] = nil
-        package.loaded["codecompanion-extra.tools.task"] = nil
-        package.loaded["codecompanion-extra.tools.consult"] = nil
-        package.loaded["codecompanion-extra.tools.subagent.models"] = nil
-        package.loaded["codecompanion-extra.tools.subagent.messages"] = nil
-        package.loaded["codecompanion-extra.tools.subagent.lifecycle"] = nil
-        package.loaded["codecompanion-extra.agents.hierarchy"] = nil
+        package.loaded["hive.tools.compat"] = nil
+        package.loaded["hive.tools.task"] = nil
+        package.loaded["hive.tools.consult"] = nil
+        package.loaded["hive.tools.subagent.models"] = nil
+        package.loaded["hive.tools.subagent.messages"] = nil
+        package.loaded["hive.tools.subagent.lifecycle"] = nil
+        package.loaded["hive.agents.hierarchy"] = nil
 
-        local config = require("codecompanion-extra.config")
+        local config = require("hive.config")
         config.setup({
           agents = {
             small_model = nil,
@@ -67,8 +67,8 @@ T["tools"] = new_set()
 
 T["subagent"]["lifecycle uses explicit small model override when configured"] = function()
   local params = child.lua([[
-    local lifecycle = require("codecompanion-extra.tools.subagent.lifecycle")
-    vim.g.EXTRA_SMALL_MODEL = "openai/gpt-4o-mini"
+    local lifecycle = require("hive.tools.subagent.lifecycle")
+    vim.g.HIVE_SMALL_MODEL = "openai/gpt-4o-mini"
 
     local output = lifecycle.get_adapter_params({
       parent_chat = {
@@ -80,7 +80,7 @@ T["subagent"]["lifecycle uses explicit small model override when configured"] = 
       model_type = "small",
     })
 
-    vim.g.EXTRA_SMALL_MODEL = nil
+    vim.g.HIVE_SMALL_MODEL = nil
     return output
   ]])
 
@@ -92,8 +92,8 @@ end
 
 T["subagent"]["lifecycle inherits parent adapter when no override exists"] = function()
   local params = child.lua([[
-    local lifecycle = require("codecompanion-extra.tools.subagent.lifecycle")
-    vim.g.EXTRA_SMALL_MODEL = nil
+    local lifecycle = require("hive.tools.subagent.lifecycle")
+    vim.g.HIVE_SMALL_MODEL = nil
 
     return lifecycle.get_adapter_params({
       parent_chat = {
@@ -120,8 +120,8 @@ end
 
 T["subagent"]["message extraction includes llm output tool summary and duration"] = function()
   local summary = child.lua([[
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
-    local messages = require("codecompanion-extra.tools.subagent.messages")
+    local hierarchy = require("hive.agents.hierarchy")
+    local messages = require("hive.tools.subagent.messages")
     hierarchy.clear()
 
     hierarchy.create_session({
@@ -133,7 +133,7 @@ T["subagent"]["message extraction includes llm output tool summary and duration"
 
     hierarchy.start_timer(42)
     hierarchy.tool_started(42, "tool_1", "read_file")
-    hierarchy.tool_finished(42, "tool_1", true, "Read lua/codecompanion-extra/agents/init.lua")
+    hierarchy.tool_finished(42, "tool_1", true, "Read lua/hive/agents/init.lua")
     hierarchy.set_status(42, "completed", "done")
 
     local child_chat = {
@@ -163,8 +163,8 @@ end
 
 T["tools"]["task schema enum stays aligned with task subagent registry"] = function()
   local enums = child.lua([[
-    local registry = require("codecompanion-extra.agents.registry")
-    local task = require("codecompanion-extra.tools.task")
+    local registry = require("hive.agents.registry")
+    local task = require("hive.tools.task")
 
     local expected = registry.get_task_subagent_names()
     local actual = task.schema["function"].parameters.properties.tasks.items.properties.subagent_type.enum
@@ -182,8 +182,8 @@ end
 
 T["tools"]["consult schema enum stays aligned with advisor registry"] = function()
   local enums = child.lua([[
-    local registry = require("codecompanion-extra.agents.registry")
-    local consult = require("codecompanion-extra.tools.consult")
+    local registry = require("hive.agents.registry")
+    local consult = require("hive.tools.consult")
 
     local expected = registry.get_advisor_names()
     local actual = consult.schema["function"].parameters.properties.advisor_type.enum
@@ -199,9 +199,32 @@ T["tools"]["consult schema enum stays aligned with advisor registry"] = function
   expect.equality(enums.actual, enums.expected)
 end
 
+T["tools"]["swarm worker no-arg schemas encode empty properties as objects"] = function()
+  local result = child.lua([[
+    local worker = require("hive.swarm.tools.worker")
+
+    local read_messages = worker.get("read_messages")
+    local get_swarm_status = worker.get("get_swarm_status")
+
+    return {
+      read_messages = vim.json.decode(vim.json.encode(read_messages.schema["function"].parameters)),
+      get_swarm_status = vim.json.decode(vim.json.encode(get_swarm_status.schema["function"].parameters)),
+    }
+  ]])
+
+  expect.equality(result.read_messages, {
+    type = "object",
+    properties = {},
+  })
+  expect.equality(result.get_swarm_status, {
+    type = "object",
+    properties = {},
+  })
+end
+
 T["tools"]["task cmds reports error for empty task list"] = function()
   local result = child.lua([[
-    local task = require("codecompanion-extra.tools.task")
+    local task = require("hive.tools.task")
     local callback_result = nil
 
     task.cmds[1]({
@@ -223,7 +246,7 @@ end
 
 T["tools"]["consult cmds rejects non advisor subagent types"] = function()
   local result = child.lua([[
-    local consult = require("codecompanion-extra.tools.consult")
+    local consult = require("hive.tools.consult")
     local callback_result = nil
 
     consult.cmds[1]({
@@ -247,11 +270,11 @@ end
 
 T["tools"]["task cmds executes mocked subagents and returns consolidated result"] = function()
   local result = child.lua([=[
-    package.loaded["codecompanion-extra.tools.task"] = nil
-    package.loaded["codecompanion-extra.tools.subagent"] = nil
-    package.loaded["codecompanion-extra.tools.subagent.models"] = nil
+    package.loaded["hive.tools.task"] = nil
+    package.loaded["hive.tools.subagent"] = nil
+    package.loaded["hive.tools.subagent.models"] = nil
 
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
+    local hierarchy = require("hive.agents.hierarchy")
     hierarchy.clear()
 
     local function make_timer()
@@ -290,7 +313,7 @@ T["tools"]["task cmds executes mocked subagents and returns consolidated result"
 
     lifecycle.cleanup_listeners = function() end
 
-    package.loaded["codecompanion-extra.tools.subagent"] = {
+    package.loaded["hive.tools.subagent"] = {
       utils = {
         SPINNER_FRAMES = { "-" },
         STATUS_ICONS = {
@@ -342,13 +365,13 @@ T["tools"]["task cmds executes mocked subagents and returns consolidated result"
       },
     }
 
-    package.loaded["codecompanion-extra.tools.subagent.models"] = {
+    package.loaded["hive.tools.subagent.models"] = {
       detect_suspicious_fast_completion = function(_args)
         return false, nil
       end,
     }
 
-    local task = require("codecompanion-extra.tools.task")
+    local task = require("hive.tools.task")
     local callback_result = nil
 
     task.cmds[1]({
@@ -375,11 +398,11 @@ end
 
 T["tools"]["consult cmds executes mocked advisor and returns consultation result"] = function()
   local result = child.lua([=[
-    package.loaded["codecompanion-extra.tools.consult"] = nil
-    package.loaded["codecompanion-extra.tools.subagent"] = nil
-    package.loaded["codecompanion-extra.tools.subagent.models"] = nil
+    package.loaded["hive.tools.consult"] = nil
+    package.loaded["hive.tools.subagent"] = nil
+    package.loaded["hive.tools.subagent.models"] = nil
 
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
+    local hierarchy = require("hive.agents.hierarchy")
     hierarchy.clear()
 
     local function make_timer()
@@ -415,7 +438,7 @@ T["tools"]["consult cmds executes mocked advisor and returns consultation result
 
     lifecycle.cleanup_listeners = function() end
 
-    package.loaded["codecompanion-extra.tools.subagent"] = {
+    package.loaded["hive.tools.subagent"] = {
       utils = {
         SPINNER_FRAMES = { "-" },
         STATUS_ICONS = {
@@ -467,13 +490,13 @@ T["tools"]["consult cmds executes mocked advisor and returns consultation result
       },
     }
 
-    package.loaded["codecompanion-extra.tools.subagent.models"] = {
+    package.loaded["hive.tools.subagent.models"] = {
       detect_suspicious_fast_completion = function(_args)
         return false, nil
       end,
     }
 
-    local consult = require("codecompanion-extra.tools.consult")
+    local consult = require("hive.tools.consult")
     local callback_result = nil
 
     consult.cmds[1]({

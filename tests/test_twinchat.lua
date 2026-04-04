@@ -2,7 +2,7 @@
 local MiniTest = require("mini.test")
 local T = MiniTest.new_set()
 
-local tokens = require("codecompanion-extra.twinchat.tokens")
+local tokens = require("hive.twinchat.tokens")
 
 T["tokens"] = MiniTest.new_set()
 

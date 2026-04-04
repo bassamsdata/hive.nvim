@@ -55,7 +55,7 @@ local T = new_set({
           end,
         }
 
-        package.loaded["codecompanion-extra.tools.todo"] = {
+        package.loaded["hive.tools.todo"] = {
           clear_todos = function() end,
           setup_keymap = function() end,
           get_todowrite = function()
@@ -66,29 +66,29 @@ local T = new_set({
           end,
         }
 
-        package.loaded["codecompanion-extra.tools.task"] = tool("Task tool")
-        package.loaded["codecompanion-extra.tools.ask_user"] = tool("Ask user tool")
-        package.loaded["codecompanion-extra.tools.consult"] = tool("Consult tool")
-        package.loaded["codecompanion-extra.tools.list_directory"] = tool("List directory tool")
-        package.loaded["codecompanion-extra.tools.cmd_runner"] = tool("Command runner tool")
-        package.loaded["codecompanion-extra.tools.subagent.model_picker"] = {
+        package.loaded["hive.tools.task"] = tool("Task tool")
+        package.loaded["hive.tools.ask_user"] = tool("Ask user tool")
+        package.loaded["hive.tools.consult"] = tool("Consult tool")
+        package.loaded["hive.tools.list_directory"] = tool("List directory tool")
+        package.loaded["hive.tools.cmd_runner"] = tool("Command runner tool")
+        package.loaded["hive.tools.subagent.model_picker"] = {
           setup = function() end,
         }
-        package.loaded["codecompanion-extra.agent_manager"] = {
+        package.loaded["hive.agent_manager"] = {
           toggle = function() end,
         }
-        package.loaded["codecompanion-extra.skills"] = {
+        package.loaded["hive.skills"] = {
           has_skills = function()
             return false
           end,
         }
-        package.loaded["codecompanion-extra.tools"] = {
+        package.loaded["hive.tools"] = {
           get = function()
             return nil
           end,
         }
 
-        package.loaded["codecompanion-extra.agents.markdown"] = {
+        package.loaded["hive.agents.markdown"] = {
           default_dir = function()
             return ""
           end,
@@ -97,7 +97,7 @@ local T = new_set({
           end,
         }
 
-        package.loaded["codecompanion-extra.agents.prompts"] = {
+        package.loaded["hive.agents.prompts"] = {
           get = function(agent_name, chat)
             local adapter_name = chat and chat.adapter and chat.adapter.name or "unknown"
             local model_name = chat and chat.adapter and chat.adapter.schema and chat.adapter.schema.model
@@ -107,7 +107,7 @@ local T = new_set({
           end,
         }
 
-        package.loaded["codecompanion-extra.agents.navigation"] = {
+        package.loaded["hive.agents.navigation"] = {
           setup = function() end,
           setup_winbar = function() end,
           flash_model_info = function() end,
@@ -241,18 +241,18 @@ local T = new_set({
           return chat
         end
 
-        package.loaded["codecompanion-extra.agents"] = nil
-        package.loaded["codecompanion-extra.agents.registry"] = nil
-        package.loaded["codecompanion-extra.agents.hierarchy"] = nil
+        package.loaded["hive.agents"] = nil
+        package.loaded["hive.agents.registry"] = nil
+        package.loaded["hive.agents.hierarchy"] = nil
 
-        local agents = require("codecompanion-extra.agents")
+        local agents = require("hive.agents")
         agents.setup({
           load_default_agents = false,
           load_cwd_agents = false,
           keymap = {},
         })
 
-        require("codecompanion-extra.agents.hierarchy").clear()
+        require("hive.agents.hierarchy").clear()
       ]])
     end,
     post_case = function()
@@ -265,8 +265,8 @@ T["agents"] = new_set()
 
 T["agents"]["activate applies plan agent prompt, tools, and session"] = function()
   local summary = child.lua([[
-    local agents = require("codecompanion-extra.agents")
-    local hierarchy = require("codecompanion-extra.agents.hierarchy")
+    local agents = require("hive.agents")
+    local hierarchy = require("hive.agents.hierarchy")
 
     local chat = _G.new_chat(101, "model-a")
     local ok = agents.activate("plan", chat, { silent = true })
@@ -316,7 +316,7 @@ end
 
 T["agents"]["cycle switches between build and plan in sorted order"] = function()
   local summary = child.lua([[
-    local agents = require("codecompanion-extra.agents")
+    local agents = require("hive.agents")
     local chat = _G.new_chat(102, "model-a")
 
     agents.activate("build", chat, { silent = true })
@@ -337,7 +337,7 @@ end
 
 T["agents"]["switching from plan to build adds reminder and cleans old group"] = function()
   local summary = child.lua([[
-    local agents = require("codecompanion-extra.agents")
+    local agents = require("hive.agents")
     local chat = _G.new_chat(103, "model-a")
 
     agents.activate("plan", chat, { silent = true })
@@ -383,7 +383,7 @@ end
 
 T["agents"]["model change event refreshes prompt without duplicates"] = function()
   local summary = child.lua([[
-    local agents = require("codecompanion-extra.agents")
+    local agents = require("hive.agents")
     local chat = _G.new_chat(104, "model-a")
 
     agents.activate("build", chat, { silent = true })

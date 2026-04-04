@@ -21,7 +21,7 @@ T["integration"] = MiniTest.new_set()
 
 T["discovery"]["module loads successfully"] = function()
   local result = child.lua([[
-    local discovery = require("codecompanion-extra.skills.discovery")
+    local discovery = require("hive.skills.discovery")
     return discovery ~= nil
   ]])
   MiniTest.expect.equality(result, true)
@@ -29,7 +29,7 @@ end
 
 T["discovery"]["discovers skills from array of directories"] = function()
   local result = child.lua([[
-    local discovery = require("codecompanion-extra.skills.discovery")
+    local discovery = require("hive.skills.discovery")
     
     local test_dirs = {}
     table.insert(test_dirs, "/tmp/.codecompanion/skills")
@@ -42,7 +42,7 @@ end
 
 T["parser"]["parses SKILL.md with valid name"] = function()
   local result = child.lua([[
-    local parser = require("codecompanion-extra.skills.parser")
+    local parser = require("hive.skills.parser")
     
     local valid_names = {
       "neovim-help",
@@ -64,7 +64,7 @@ end
 
 T["parser"]["rejects invalid skill names"] = function()
   local result = child.lua([[
-    local parser = require("codecompanion-extra.skills.parser")
+    local parser = require("hive.skills.parser")
     
     local invalid_names = {
       "Neovim 0.12 Documentation (help) Extractor",
@@ -89,7 +89,7 @@ end
 
 T["integration"]["setup initializes with config"] = function()
   local result = child.lua([[
-    local skills = require("codecompanion-extra.skills")
+    local skills = require("hive.skills")
     
     skills.setup({ 
       enabled = true,
@@ -103,7 +103,7 @@ end
 
 T["integration"]["get_skill returns nil for nonexistent skill"] = function()
   local result = child.lua([[
-    local skills = require("codecompanion-extra.skills")
+    local skills = require("hive.skills")
     skills.setup({ enabled = true, scan_to_git_root = false })
     
     local skill = skills.get_skill("nonexistent-skill-xyz")
