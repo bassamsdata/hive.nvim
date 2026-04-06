@@ -1,5 +1,6 @@
 deps/
 bugs/
+PRIVATE_PLANNING/
 
 # Docs
 node_modules/
