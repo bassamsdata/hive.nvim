@@ -1,12 +1,14 @@
 import { defineConfig } from "vitepress";
 
+const BASE_PATH = "/hive.nvim/";
+
 export default defineConfig({
   title: "Hive",
   description:
     "Multi-agent orchestration for Neovim, built on Codecompanion.nvim",
-  base: "/hive.nvim/",
+  base: BASE_PATH,
 
-  head: [["link", { rel: "icon", href: "/hive.nvim/favicon.ico" }]],
+  head: [["link", { rel: "icon", href: `${BASE_PATH}favicon.ico` }]],
 
   themeConfig: {
     logo: "/logo.svg",

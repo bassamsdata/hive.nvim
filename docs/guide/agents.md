@@ -43,6 +43,8 @@ Press `gA` or `]a` to open the agent manager sidebar. It shows all active chats 
 
 Primary agents can delegate work to subagents using the `task` tool. Subagents run in their own chat context with focused tools and return results when complete.
 
+In the current beta, subagents should only be spawned when the user explicitly asks for delegation or parallel exploration.
+
 ### Subagent Types
 
 | Type | Purpose | Tools |
@@ -51,7 +53,7 @@ Primary agents can delegate work to subagents using the `task` tool. Subagents r
 | **analyzer** | Code analysis and diagnostics | `read_file`, `grep_search`, `get_diagnostics`, `file_search` |
 | **general** | Multi-step research | `read_file`, `grep_search`, `cmd_runner`, `file_search`, `list_directory` |
 
-Subagents can run in parallel — spawn multiple explorers to search different parts of your codebase simultaneously.
+Subagents can run in parallel, but they should only be started when the user specifically wants that delegation.
 
 ### Navigation
 

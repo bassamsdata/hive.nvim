@@ -4,11 +4,19 @@ Subagents are child agents spawned by a primary agent to handle focused tasks in
 
 ## How Subagents Work
 
-1. The primary agent decides it needs exploration or analysis
+1. The user explicitly asks for subagents, delegation, or parallel exploration
 2. It calls the `task` tool with one or more subagent definitions
 3. Each subagent gets its own chat buffer with focused tools
 4. Subagents work independently (and in parallel if multiple)
 5. Results are returned to the parent agent when complete
+
+## Beta Note
+
+Subagent spawning is currently beta behavior.
+
+- Hive should not spawn subagents automatically just because delegation seems helpful
+- Subagents should only be started when the user explicitly asks for them
+- If the user has not asked for delegation, the agent should continue in the current chat
 
 ## Subagent Types
 
@@ -56,13 +64,13 @@ Navigate between parent and subagent chat buffers:
 
 ## Model Configuration
 
-By default, subagents use a "small" model (fast and cheap) for exploration tasks. The primary agent uses the "big" model for complex work.
+By default, subagents use the configured `small_model` when set. If no subagent override is configured, they inherit from the parent chat.
 
 Override models at runtime:
 
 ```vim
-:Hive model small claude-sonnet-4-20250514
-:Hive model big claude-opus-4-20250514
+:Hive model small openai/gpt-4.1-mini
+:Hive model big openai/o3
 ```
 
 Or press `gm` / `]m` in a chat buffer to set the subagent model interactively.
@@ -70,6 +78,6 @@ Or press `gm` / `]m` in a chat buffer to set the subagent model interactively.
 Persistent overrides via environment-style globals:
 
 ```lua
-vim.g.HIVE_SMALL_MODEL = "claude-sonnet-4-20250514"
-vim.g.HIVE_BIG_MODEL = "claude-opus-4-20250514"
+vim.g.HIVE_SMALL_MODEL = "openai/gpt-4.1-mini"
+vim.g.HIVE_BIG_MODEL = "openai/o3"
 ```

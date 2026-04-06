@@ -54,3 +54,20 @@ jobs:
           export VIM="${PWD}/_neovim/share/nvim/runtime"
           nvim --version
           make test
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Docs Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Docs
+        run: bun run docs:build

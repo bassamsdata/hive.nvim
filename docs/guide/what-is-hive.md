@@ -16,21 +16,21 @@ CodeCompanion provides a solid foundation for AI-assisted coding in Neovim. Hive
 Hive integrates with CodeCompanion through its extension system. It doesn't modify the core plugin — it adds capabilities on top.
 
 ```
-┌─────────────────────────────────────────┐
-│              CodeCompanion              │
-│         (chat, adapters, core)          │
-├─────────────────────────────────────────┤
-│                 Hive                     │
-│  ┌──────────┐ ┌──────────┐ ┌─────────┐ │
-│  │  Agents   │ │  Tools   │ │ Context │ │
-│  │ build,plan│ │ task,ask │ │Lifecycle│ │
-│  └──────────┘ └──────────┘ └─────────┘ │
-│  ┌──────────┐ ┌──────────┐ ┌─────────┐ │
-│  │Subagents │ │ Advisors │ │ Swarm   │ │
-│  │explorer, │ │sage,rev, │ │  multi  │ │
-│  │analyzer  │ │sec,perf  │ │ worker  │ │
-│  └──────────┘ └──────────┘ └─────────┘ │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│              CodeCompanion                │
+│         (chat, adapters, core)            │
+├───────────────────────────────────────────┤
+│                  Hive                     │
+│  ┌───────────┐ ┌───────────┐ ┌─────────┐  │
+│  │  Agents   │ │   Tools   │ │ Context │  │
+│  │build,plan │ │ task,ask  │ │Lifecycle│  │
+│  └───────────┘ └───────────┘ └─────────┘  │
+│  ┌───────────┐ ┌───────────┐ ┌─────────┐  │
+│  │ Subagents │ │ Advisors  │ │  Swarm  │  │
+│  │ explorer, │ │sage,rev,  │ │  multi  │  │
+│  │ analyzer  │ │sec,perf   │ │ worker  │  │
+│  └───────────┘ └───────────┘ └─────────┘  │
+└───────────────────────────────────────────┘
 ```
 
 ## Key Concepts

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Hive
   text: Multi-agent orchestration for Neovim
-  tagline: Built on the powerful CodeCompanion.nvim plugin, Hive introduces Parallel subagents, context lifecycle management, and extended tooling for long autonomous coding workflows.
+  tagline: Built on CodeCompanion.nvim, Hive adds structured agents, explicit delegation, context lifecycle management, and extended tooling for long coding workflows.
   actions:
     - theme: brand
       text: Get Started
@@ -19,7 +19,7 @@ features:
     details: Role-based agents with tool isolation. Build agents code, plan agents architect — each with the right tools for the job.
   - icon: 🔀
     title: Parallel Subagents
-    details: Delegate exploration, analysis, and research tasks to parallel subagents that work simultaneously and report back.
+    details: Delegate exploration, analysis, and research to focused subagents when you explicitly ask for parallel help.
   - icon: 🧠
     title: Context Lifecycle
     details: Automatic context window management with nudge, compaction, and reset layers to sustain long-running sessions.

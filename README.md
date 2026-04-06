@@ -1,4 +1,4 @@
-# codecompanion-extra.nvim
+# Hive.nvim
 
 Extension plugin for [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) that adds a multi-agent system with parallel subagent orchestration, context lifecycle management, and extended tooling — designed for long, autonomous coding workflows.
 
@@ -14,23 +14,33 @@ Requires Neovim >= 0.11 and a working codecompanion.nvim installation.
 
 ## Installation
 
-Using lazy.nvim:
+Using `lazy.nvim`:
 
 ```lua
 {
-  "bassamsdata/codecompanion-extra.nvim",
+  "olimorris/codecompanion.nvim",
   dependencies = {
-    "olimorris/codecompanion.nvim",
+    "bassamsdata/hive.nvim",
   },
 }
 ```
 
-Then register it as a codecompanion extension:
+Using built-in `vim.pack` (Neovim 0.12+):
+
+```lua
+vim.pack.add({
+  "https://github.com/olimorris/codecompanion.nvim",
+  "https://github.com/bassamsdata/hive.nvim",
+})
+```
+
+For either installation method, enable Hive in your CodeCompanion setup:
 
 ```lua
 require("codecompanion").setup({
   extensions = {
     hive = {
+      enabled = true,
       opts = {
         -- your config overrides here
       },

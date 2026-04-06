@@ -6,13 +6,14 @@ Hive provides the `:Hive` command with subcommands for runtime control.
 
 ```vim
 :Hive <subcommand> [args]
+:Hive! agent [name]
 ```
 
 ## Subcommands
 
 ### `status`
 
-Show current Hive state — active agent, loaded modules, configuration.
+Show the current Hive runtime state and configuration.
 
 ```vim
 :Hive status
@@ -20,11 +21,13 @@ Show current Hive state — active agent, loaded modules, configuration.
 
 ### `agent`
 
-Activate a specific agent by name.
+Activate a specific agent in the current chat, or create a new chat with `!`.
 
 ```vim
 :Hive agent build
 :Hive agent plan
+:Hive agent off
+:Hive! agent build
 ```
 
 ### `model`
@@ -32,8 +35,10 @@ Activate a specific agent by name.
 Set the model for subagents at runtime. Changes persist for the session.
 
 ```vim
-:Hive model small claude-sonnet-4-20250514
-:Hive model big claude-opus-4-20250514
+:Hive model
+:Hive model small openai/gpt-4.1-mini
+:Hive model big openai/o3
+:Hive model clear
 ```
 
 ### `list`
@@ -44,12 +49,23 @@ List available agents.
 :Hive list
 ```
 
-### `debug`
+### `manager`
 
-Toggle debug mode. When enabled, additional logging is written to the debug log.
+Toggle the agent manager sidebar.
 
 ```vim
-:Hive debug
+:Hive manager
+```
+
+### `next` / `prev` / `parent` / `subagents`
+
+Navigate the parent/subagent hierarchy from commands instead of keymaps.
+
+```vim
+:Hive next
+:Hive prev
+:Hive parent
+:Hive subagents
 ```
 
 ### `setup`
@@ -62,4 +78,4 @@ Re-run setup with current configuration. Useful after changing `vim.g` settings.
 
 ## Tab Completion
 
-All subcommands support tab completion. Type `:Hive ` and press `<Tab>` to see available subcommands. Model names also complete based on your configured adapter.
+All subcommands support tab completion. Type `:Hive ` and press `<Tab>` to see available subcommands.

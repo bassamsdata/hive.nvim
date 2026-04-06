@@ -10,6 +10,70 @@ if vim.fn.has("nvim-0.11") ~= 1 then
   return
 end
 
+local fmt = string.format
+
+local function _count(tbl)
+  local total = 0
+  for _ in pairs(tbl or {}) do
+    total = total + 1
+  end
+  return total
+end
+
+local function _module_enabled(config, name)
+  local module = config.modules and config.modules[name]
+  if module == nil then return false end
+  if type(module) == "boolean" then return module end
+  return module.enabled ~= false
+end
+
+local function _status_label(value)
+  if not value or value == "" then return "(none)" end
+  return value
+end
+
+local function _enabled_label(value)
+  return value and "enabled" or "disabled"
+end
+
+local function _current_chat()
+  local ok, chat_module = pcall(require, "codecompanion.interactions.chat")
+  if ok and type(chat_module.buf_get_chat) == "function" then
+    local chat = chat_module.buf_get_chat(0)
+    if chat then return chat end
+  end
+
+  local cc_ok, codecompanion = pcall(require, "codecompanion")
+  if cc_ok and type(codecompanion.buf_get_chat) == "function" then return codecompanion.buf_get_chat(0) end
+
+  return nil
+end
+
+local function _chat_model(chat)
+  if not chat or not chat.adapter then return nil end
+  local model = chat.adapter.model
+  if type(model) == "table" then model = model.name or model.default or model.id or model.model end
+  if model then return model end
+  local schema_model = chat.adapter.schema and chat.adapter.schema.model
+  if type(schema_model) == "table" then
+    return schema_model.name or schema_model.default or schema_model.id or schema_model.model
+  end
+  if type(schema_model) == "string" then return schema_model end
+  return nil
+end
+
+local function _resolved_model_line(config, model_type)
+  local models = require("hive.tools.subagent.models")
+  local model = models.get_model(model_type)
+  local config_value = config.agents and config.agents[model_type .. "_model"]
+  local global_value = vim.g["HIVE_" .. model_type:upper() .. "_MODEL"]
+  local source = global_value and "vim.g" or (config_value and "config" or "inherit")
+
+  if not model then return fmt("  %s model: (inherits from parent chat)", model_type) end
+
+  return fmt("  %s model: %s/%s [%s]", model_type, model.adapter, model.model, source)
+end
+
 ---@class HiveSubcommand
 ---@field impl fun(args: string[], opts: table) Implementation function
 ---@field complete? fun(subcmd_arg_lead: string): string[] Completion function
@@ -25,7 +89,7 @@ local subcommands = {
   },
 
   ---Switch or create agent on current/new chat
-  ---Usage: :Hive agent [name] or :Hive agent! [name] (new chat)
+  ---Usage: :Hive agent [name] or :Hive!agent [name] (new chat)
   agent = {
     impl = function(args, opts)
       local hive = require("hive")
@@ -80,7 +144,7 @@ local subcommands = {
 
       local chat = chat_module.buf_get_chat(0)
       if not chat then
-        notify("No active chat buffer. Use :Hive agent! to create a new chat", vim.log.levels.WARN)
+        notify("No active chat buffer. Use :Hive! agent to create a new chat", vim.log.levels.WARN)
         return
       end
 
@@ -166,6 +230,68 @@ local subcommands = {
         local desc = agent and agent.description or ""
         table.insert(lines, prefix .. name .. type_indicator .. ": " .. desc)
       end
+
+      notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+    end,
+  },
+
+  status = {
+    impl = function()
+      local hive = require("hive")
+      if not hive.is_initialized() then hive.setup() end
+
+      local config = require("hive.config").get()
+      local lines = { "Hive status:", "" }
+
+      table.insert(lines, "Runtime:")
+      table.insert(lines, "  initialized: yes")
+
+      local chat = _current_chat()
+      local state = require("hive.state").instance()
+      local view = state and state:get_view() or nil
+      local parent = chat and view and view.parents and view.parents[chat.bufnr] or nil
+      local tracked_parents = view and _count(view.parents) or 0
+
+      table.insert(lines, "  tracked chats: " .. tracked_parents)
+      table.insert(lines, "  inline status: " .. _status_label(view and view.inline and view.inline.status or "idle"))
+
+      table.insert(lines, "")
+      table.insert(lines, "Current chat:")
+
+      if not chat then
+        table.insert(lines, "  active chat: no")
+      else
+        local agents = require("hive.agents")
+        local adapter = chat.adapter and (chat.adapter.formatted_name or chat.adapter.name) or nil
+        local model = _chat_model(chat)
+        local active_agent = agents.active(chat.bufnr)
+
+        table.insert(lines, "  active chat: yes")
+        table.insert(lines, "  bufnr: " .. chat.bufnr)
+        table.insert(lines, "  agent: " .. _status_label(active_agent))
+        table.insert(lines, "  state: " .. _status_label(parent and parent.status or "idle"))
+        table.insert(lines, "  adapter: " .. _status_label(parent and parent.adapter or adapter))
+        table.insert(lines, "  model: " .. _status_label(parent and parent.model or model))
+        table.insert(lines, "  current tool: " .. _status_label(parent and parent.current_tool))
+        table.insert(lines, "  subagents: " .. (parent and _count(parent.subagents) or 0))
+      end
+
+      table.insert(lines, "")
+      table.insert(lines, "Configuration:")
+      table.insert(lines, "  keymap prefix: " .. require("hive.config").keymap_prefix())
+      table.insert(
+        lines,
+        fmt(
+          "  modules: agents=%s skills=%s notify=%s context_lifecycle=%s twinchat=%s",
+          _enabled_label(_module_enabled(config, "agents")),
+          _enabled_label(_module_enabled(config, "skills")),
+          _enabled_label(_module_enabled(config, "notify")),
+          _enabled_label(_module_enabled(config, "context_lifecycle")),
+          _enabled_label(_module_enabled(config, "twinchat"))
+        )
+      )
+      table.insert(lines, _resolved_model_line(config, "small"))
+      table.insert(lines, _resolved_model_line(config, "big"))
 
       notify(table.concat(lines, "\n"), vim.log.levels.INFO)
     end,

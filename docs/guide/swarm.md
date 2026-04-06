@@ -2,6 +2,14 @@
 
 Swarm is a multi-agent system where persistent worker agents claim tasks from a shared queue, coordinate via messages, and use file locking to avoid conflicts.
 
+## Beta Note
+
+Swarm is currently a beta workflow.
+
+- It should not start automatically unless the user explicitly asks for a swarm
+- Prefer normal single-agent work or targeted subagents unless the user clearly wants coordinated parallel execution
+- Use swarm when the user wants deliberate multi-agent orchestration, not just because it might be helpful
+
 ## When to Use Swarm
 
 Use swarm instead of regular subagents when:

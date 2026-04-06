@@ -23,6 +23,8 @@ Retrieve LSP diagnostics (errors, warnings, hints) from any file. Agents use thi
 
 Delegate work to subagents. Supports single sequential tasks or multiple parallel tasks.
 
+In the current beta, this should be used only when the user explicitly asks for subagents or parallel delegation.
+
 ```lua
 -- Agent spawns parallel exploration
 task({
@@ -75,3 +77,5 @@ Load specialized instructions for specific task types. Skills provide domain-spe
 ### swarm
 
 Orchestrate multiple persistent agents working in parallel on a shared task queue. Unlike `task` (fire-and-forget subagents), swarm agents coordinate via messages and file locking.
+
+Swarm is more powerful and more invasive than normal delegation. In the current beta, it should only be started when the user explicitly asks for a swarm.

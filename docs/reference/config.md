@@ -23,6 +23,18 @@ Hive is configured through CodeCompanion's extension system:
 
 ```lua
 {
+  modules = {
+    spinner = { enabled = true },
+    notify = { enabled = true },
+    adapters = { enabled = true },
+    tools = { enabled = true },
+    agents = { enabled = true },
+    skills = { enabled = true },
+    context_pruning = { enabled = false },
+    context_lifecycle = { enabled = true },
+    twinchat = { enabled = false },
+  },
+
   agents = {
     keymap = {
       prefix = "]",
@@ -40,11 +52,9 @@ Hive is configured through CodeCompanion's extension system:
       prunable_viewer = { modes = { n = { "gP", "]P" } }, desc = "Show prunable context" },
       hive_keymap_help = { modes = { n = "]?" }, desc = "Hive keymap reference" },
     },
-    model = {
-      small = nil,  -- auto-detected from adapter
-      big = nil,    -- auto-detected from adapter
-    },
-    confirm_expensive_model = true,
+    small_model = nil,
+    big_model = nil,
+    confirm_expensive_models = { "claude-opus*" },
   },
 
   tools = {
@@ -53,29 +63,22 @@ Hive is configured through CodeCompanion's extension system:
     task = { enabled = true },
     consult = { enabled = true },
     ask_user = { enabled = true },
-    prune = { enabled = true },
-    todo = { enabled = true },
-    list_directory = { enabled = true },
     skill = { enabled = true },
+    list_directory = { enabled = true },
+    grep_search = { enabled = true },
+    prune = { enabled = true },
+    todowrite = { enabled = true },
+    todoread = { enabled = true },
     swarm = { enabled = true },
   },
 
   context_lifecycle = {
     enabled = true,
-    nudge = {
-      start_percent = 50,
-      end_percent = 60,
-    },
-    compact = {
-      threshold_percent = 75,
-    },
-    reset = {
-      threshold_percent = 90,
-    },
+    nudge_start = 50,
+    nudge_strong = 60,
+    compact_threshold = 75,
+    reset_threshold = 90,
   },
-
-  spinner = { enabled = true },
-  notify = { enabled = true },
 }
 ```
 
@@ -106,15 +109,15 @@ agents = {
 Override models globally:
 
 ```lua
-vim.g.HIVE_SMALL_MODEL = "claude-sonnet-4-20250514"
-vim.g.HIVE_BIG_MODEL = "claude-opus-4-20250514"
+vim.g.HIVE_SMALL_MODEL = "openai/gpt-4.1-mini"
+vim.g.HIVE_BIG_MODEL = "openai/o3"
 ```
 
 Or at runtime:
 
 ```vim
-:Hive model small claude-sonnet-4-20250514
-:Hive model big claude-opus-4-20250514
+:Hive model small openai/gpt-4.1-mini
+:Hive model big openai/o3
 ```
 
 ## Disabling Features
@@ -123,11 +126,15 @@ Disable individual tools or modules:
 
 ```lua
 {
+  modules = {
+    context_lifecycle = { enabled = false },
+  },
   tools = {
     swarm = { enabled = false },
   },
-  spinner = { enabled = false },
-  context_lifecycle = { enabled = false },
+  spinner = {
+    window = { enabled = false },
+  },
 }
 ```
 
