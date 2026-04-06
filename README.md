@@ -2,6 +2,15 @@
 
 Extension plugin for [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) that adds a multi-agent system with parallel subagent orchestration, context lifecycle management, and extended tooling — designed for long, autonomous coding workflows.
 
+
+
+https://github.com/user-attachments/assets/fc161d5d-71a5-42cb-a9ce-e8a59fbbc9f5
+
+
+Screenshot showing subagents + task list + spinner
+ <img width="765" height="950" alt="Screenshot 2026-04-02 at 11 09 34 PM" src="https://github.com/user-attachments/assets/4608818a-cbad-47e2-af61-bac50c6f6779" />
+
+
 Requires Neovim >= 0.11 and a working codecompanion.nvim installation.
 
 ## Features
