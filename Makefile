@@ -25,6 +25,6 @@ format:
 testFile:
 	@if [ -z "$(FILE)" ]; then echo "Usage: make testFile FILE=path/to/test.lua"; exit 1; fi
 	@echo "Running test $(FILE)..."
-	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run({\"$(FILE)\"})"
+	nvim --headless --noplugin -u scripts/minimal_init.lua -c "lua MiniTest.run_file('$(FILE)')"
 
 .PHONY: all test test-compat format testFile
