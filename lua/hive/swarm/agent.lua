@@ -64,6 +64,7 @@ local SWARM_IDLE_TIMEOUT_MS = 300000 -- 5 minutes for swarm agents (they do sequ
 ---@field started_at number|nil When agent started working (hrtime nanoseconds)
 ---@field aug number|nil Autogroup for events
 ---@field timeout_timer uv.uv_timer_t|nil Idle timeout timer
+---@field stop_requested boolean
 local SwarmAgent = {}
 SwarmAgent.__index = SwarmAgent
 
@@ -93,6 +94,7 @@ function SwarmAgent.new(args)
   self.aug = nil
   self.timeout_timer = nil
   self.resubmit_count = 0
+  self.stop_requested = false
 
   return self
 end
@@ -295,7 +297,7 @@ function SwarmAgent:_reset_timeout_timer()
   self.timeout_timer = subagent.utils.create_timeout_timer({
     delay_ms = SWARM_IDLE_TIMEOUT_MS,
     on_timeout = function()
-      if self.status ~= "working" and self.status ~= "idle" then return end
+      if self.status ~= "working" then return end
 
       local elapsed_sec = math.floor(SWARM_IDLE_TIMEOUT_MS / 1000)
       log:warn(
@@ -319,6 +321,27 @@ end
 -- ============================================================================
 -- Lifecycle Events
 -- ============================================================================
+
+---Put the agent into an idle waiting state until new work becomes claimable.
+---@param reason string
+function SwarmAgent:enter_idle(reason)
+  if self.status == "completed" or self.status == "failed" then return end
+
+  self.status = "idle"
+  self:_stop_timeout_timer()
+
+  local session_mod = require("hive.swarm.session")
+  local session = session_mod.get(self.session_id)
+  if session then session:set_agent_status(self.name, "idle") end
+
+  local hierarchy = require("hive.agents.hierarchy")
+  hierarchy.set_status(self.bufnr, "idle", reason)
+
+  local orchestrator = require("hive.swarm.orchestrator")
+  orchestrator.reconcile_session(self.session_id, "agent_idle")
+
+  log:info("[SwarmAgent] Agent '%s' is idle: %s", self.name, reason)
+end
 
 ---Called when chat completes a response
 function SwarmAgent:on_chat_done()
@@ -364,10 +387,15 @@ function SwarmAgent:on_chat_done()
       return
     end
 
-    -- Check if there's any work this agent could still do (across all categories)
-    if session:has_available_work(self.name) then
-      -- LLM returned text instead of making tool calls — resubmit
+    local work_state = session:get_agent_work_state(self.name, self.category)
+
+    if work_state == "claimable" then
       self:_resubmit("Tasks remain in your queue. Continue: read_messages, then claim_task.")
+      return
+    end
+
+    if work_state == "waiting" then
+      self:enter_idle("Waiting for dependent or in-progress work")
       return
     end
 
@@ -383,6 +411,12 @@ end
 ---Called when chat is stopped
 function SwarmAgent:on_stopped()
   local ok, err = pcall(function()
+    if self.stop_requested then
+      self.stop_requested = false
+      if self.status ~= "completed" and self.status ~= "failed" then self:complete("Stopped by request") end
+      return
+    end
+
     self:fail("Chat was stopped")
   end)
   if not ok then log:error("[SwarmAgent] on_stopped error for '%s': %s", self.name, tostring(err)) end
@@ -423,6 +457,14 @@ function SwarmAgent:_resubmit(message)
     MAX_RESUBMIT_ATTEMPTS
   )
 
+  self.status = "working"
+  local session_mod = require("hive.swarm.session")
+  local session = session_mod.get(self.session_id)
+  if session then session:set_agent_status(self.name, "working") end
+
+  local hierarchy = require("hive.agents.hierarchy")
+  hierarchy.set_status(self.bufnr, "running")
+
   self:_reset_timeout_timer()
 
   local ok, cc_config = pcall(require, "codecompanion.config")
@@ -448,6 +490,7 @@ function SwarmAgent:start(initial_message)
 
   self.started_at = uv.hrtime()
   self.status = "working"
+  self.stop_requested = false
 
   local session_mod = require("hive.swarm.session")
   local session = session_mod.get(self.session_id)
@@ -529,6 +572,9 @@ function SwarmAgent:complete(result)
 
   self:cleanup_events()
 
+  local orchestrator = require("hive.swarm.orchestrator")
+  orchestrator.reconcile_session(self.session_id, "agent_completed")
+
   log:info("[SwarmAgent] Agent '%s' completed (%d tasks)", self.name, self.tasks_completed)
 end
 
@@ -571,6 +617,9 @@ function SwarmAgent:fail(error_msg, silent)
 
   self:cleanup_events()
 
+  local orchestrator = require("hive.swarm.orchestrator")
+  orchestrator.reconcile_session(self.session_id, "agent_failed")
+
   if silent then
     log:warn("[SwarmAgent] Agent '%s' failed (silent): %s", self.name, error_msg)
   else
@@ -582,6 +631,7 @@ end
 function SwarmAgent:stop()
   if self.status == "completed" or self.status == "failed" then return end
 
+  self.stop_requested = true
   if self.chat and self.chat.stop then pcall(self.chat.stop, self.chat) end
 
   self:complete("Stopped by request")

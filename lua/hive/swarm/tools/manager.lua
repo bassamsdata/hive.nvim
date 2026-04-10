@@ -26,6 +26,26 @@ local MAX_TASKS = 100
 -- Helper Functions
 -- ============================================================================
 
+---@param index number
+---@return string
+local function default_task_id(index)
+  return fmt("task_%d", index)
+end
+
+---@param used_ids table<string, boolean>
+---@param next_index number
+---@return string
+---@return number
+local function next_available_task_id(used_ids, next_index)
+  local task_id = default_task_id(next_index)
+  while used_ids[task_id] do
+    next_index = next_index + 1
+    task_id = default_task_id(next_index)
+  end
+
+  return task_id, next_index + 1
+end
+
 ---Validate agent definition
 ---@param agent table
 ---@return boolean valid
@@ -55,6 +75,10 @@ end
 ---@return boolean valid
 ---@return string|nil error
 local function validate_task(task)
+  if task.id ~= nil and (type(task.id) ~= "string" or task.id == "") then
+    return false, "Task id must be a non-empty string"
+  end
+
   if not task.content or type(task.content) ~= "string" or task.content == "" then
     return false, "Task must have non-empty content"
   end
@@ -68,7 +92,51 @@ local function validate_task(task)
     return false, fmt("Invalid priority '%s'", task.priority)
   end
 
+  if task.dependencies ~= nil then
+    if type(task.dependencies) ~= "table" then return false, "Task dependencies must be an array" end
+
+    for _, dep in ipairs(task.dependencies) do
+      if type(dep) ~= "string" or dep == "" then return false, "Task dependencies must contain non-empty strings" end
+    end
+  end
+
   return true, nil
+end
+
+---Normalize task IDs and dependency references into a stable runtime form.
+---@param tasks table[]
+---@param existing_ids? table<string, boolean>
+---@return table[]
+local function normalize_tasks(tasks, existing_ids)
+  local normalized = {}
+  local positional_ids = {}
+  local used_ids = vim.deepcopy(existing_ids or {})
+  local next_index = 1
+
+  for i, task in ipairs(tasks) do
+    local id = task.id
+    if not id then
+      id, next_index = next_available_task_id(used_ids, next_index)
+    end
+
+    positional_ids[tostring(i)] = id
+    used_ids[id] = true
+
+    local normalized_task = vim.deepcopy(task)
+    normalized_task.id = id
+    normalized_task.dependencies = normalized_task.dependencies or {}
+    table.insert(normalized, normalized_task)
+  end
+
+  for _, task in ipairs(normalized) do
+    local deps = {}
+    for _, dep in ipairs(task.dependencies or {}) do
+      table.insert(deps, positional_ids[dep] or dep)
+    end
+    task.dependencies = deps
+  end
+
+  return normalized
 end
 
 ---Detect cycles in task dependency graph (DFS)
@@ -203,6 +271,8 @@ local function handle_start(chat, args, output_handler)
     return { status = "error", data = fmt("Maximum %d tasks allowed, got %d", MAX_TASKS, #tasks) }
   end
 
+  tasks = normalize_tasks(tasks)
+
   local agent_names = {}
   for i, agent in ipairs(agents) do
     local valid, err = validate_agent(agent)
@@ -219,9 +289,14 @@ local function handle_start(chat, args, output_handler)
     agent_categories[agent.category] = true
   end
 
+  local task_ids = {}
+
   for i, task in ipairs(tasks) do
     local valid, err = validate_task(task)
     if not valid then return { status = "error", data = fmt("Invalid task[%d]: %s", i, err) } end
+
+    if task_ids[task.id] then return { status = "error", data = fmt("Duplicate task id: '%s'", task.id) } end
+    task_ids[task.id] = true
 
     if not agent_categories[task.category] then
       return {
@@ -297,9 +372,19 @@ local function handle_add_tasks(bufnr, args)
   local tasks = args.tasks
   if not tasks or #tasks == 0 then return { status = "error", data = "No tasks provided" } end
 
+  local task_ids = {}
+  for task_id, _ in pairs(orchestrator.session.tasks) do
+    task_ids[task_id] = true
+  end
+
+  tasks = normalize_tasks(tasks, task_ids)
+
   for i, task in ipairs(tasks) do
     local valid, err = validate_task(task)
     if not valid then return { status = "error", data = fmt("Invalid task[%d]: %s", i, err) } end
+
+    if task_ids[task.id] then return { status = "error", data = fmt("Duplicate task id: '%s'", task.id) } end
+    task_ids[task.id] = true
   end
 
   orchestrator:add_tasks(tasks)
@@ -473,6 +558,10 @@ Optional: priority (critical/high/medium/low), dependencies (array of task IDs)]
                 content = {
                   type = "string",
                   description = "Task description - what needs to be done",
+                },
+                id = {
+                  type = "string",
+                  description = "Optional stable task ID for dependencies. Defaults to task_N when omitted.",
                 },
                 category = {
                   type = "string",

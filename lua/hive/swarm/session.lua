@@ -158,13 +158,16 @@ local function generate_session_id()
 end
 
 ---Generate unique task ID with a short label from content
----@param content string
 ---@return string
-local function generate_task_id(content)
+local function generate_task_id()
   _task_counter = _task_counter + 1
-  local label = content:gsub("%s+", "_"):gsub("[^%w_]", ""):sub(1, 30):lower()
-  if label == "" then label = "task" end
-  return fmt("%s_%d", label, _task_counter)
+  return fmt("task_%d", _task_counter)
+end
+
+---@param task_id string
+local function sync_task_counter(task_id)
+  local task_num = tonumber(task_id:match("^task_(%d+)$"))
+  if task_num and task_num > _task_counter then _task_counter = task_num end
 end
 
 ---Generate unique message ID
@@ -499,10 +502,13 @@ end
 -- ============================================================================
 
 ---Add a task to the swarm
----@param args { content: string, category: string, priority?: string, dependencies?: string[] }
----@return SwarmTask
+---@param args { id?: string, content: string, category: string, priority?: string, dependencies?: string[] }
+---@return SwarmTask|nil
+---@return string|nil
 function SwarmSession:add_task(args)
-  local task_id = generate_task_id(args.content)
+  local task_id = args.id or generate_task_id()
+  if self.tasks[task_id] then return nil, fmt("Task '%s' already exists", task_id) end
+  sync_task_counter(task_id)
 
   ---@type SwarmTask
   local task = {
@@ -523,18 +529,21 @@ function SwarmSession:add_task(args)
 
   log:debug("[Swarm] Added task %s: %s (category: %s)", task_id, args.content, args.category)
 
-  return task
+  return task, nil
 end
 
 ---Add multiple tasks
----@param tasks_list { content: string, category: string, priority?: string, dependencies?: string[] }[]
----@return SwarmTask[]
+---@param tasks_list { id?: string, content: string, category: string, priority?: string, dependencies?: string[] }[]
+---@return SwarmTask[]|nil
+---@return string|nil
 function SwarmSession:add_tasks(tasks_list)
   local created = {}
   for _, task_def in ipairs(tasks_list) do
-    table.insert(created, self:add_task(task_def))
+    local task, err = self:add_task(task_def)
+    if err then return nil, err end
+    table.insert(created, task)
   end
-  return created
+  return created, nil
 end
 
 ---Claim a task for an agent (atomic operation)
@@ -680,6 +689,12 @@ function SwarmSession:all_tasks_done()
   return true
 end
 
+---Check if any tasks remain unresolved.
+---@return boolean
+function SwarmSession:has_unresolved_tasks()
+  return not self:all_tasks_done()
+end
+
 ---Get pending task count for a category
 ---@param category? string
 ---@return number
@@ -693,12 +708,11 @@ function SwarmSession:pending_task_count(category)
   return count
 end
 
----Check if there is any claimable work for an agent
----Considers tasks in any status that could become available (pending, blocked with met deps)
+---Check if there is any claimable work for an agent right now.
 ---@param agent_name string
 ---@param category? string
 ---@return boolean
-function SwarmSession:has_available_work(agent_name, category)
+function SwarmSession:has_claimable_work(agent_name, category)
   local agent = self.agents[agent_name]
   if not agent then return false end
 
@@ -706,24 +720,66 @@ function SwarmSession:has_available_work(agent_name, category)
   if agent.current_task then return true end
 
   for _, task in pairs(self.tasks) do
-    if task.status == TASK_STATUS.PENDING or task.status == TASK_STATUS.BLOCKED then
+    if task.status == TASK_STATUS.PENDING then
       if not category or task.category == category then
-        if task.status == TASK_STATUS.PENDING and self:_are_dependencies_met(task) then return true end
-        -- Blocked tasks may become available when in-progress tasks complete
-        if task.status == TASK_STATUS.BLOCKED then return true end
+        if self:_are_dependencies_met(task) then return true end
       end
     end
   end
 
-  -- Also check if there are in-progress tasks by other agents in our category
-  -- (they might fail and release back to pending)
+  return false
+end
+
+---Check if any claimable tasks exist globally.
+---@param category? string
+---@return boolean
+function SwarmSession:has_any_claimable_tasks(category)
   for _, task in pairs(self.tasks) do
-    if task.status == TASK_STATUS.IN_PROGRESS or task.status == TASK_STATUS.CLAIMED then
-      if not category or task.category == category then return true end
+    if task.status == TASK_STATUS.PENDING then
+      if (not category or task.category == category) and self:_are_dependencies_met(task) then return true end
     end
   end
 
   return false
+end
+
+---Check if unresolved work remains in a category, even if not claimable yet.
+---@param category string
+---@return boolean
+function SwarmSession:has_category_work_remaining(category)
+  for _, task in pairs(self.tasks) do
+    if task.category == category then
+      local unresolved = task.status ~= TASK_STATUS.COMPLETED and task.status ~= TASK_STATUS.CANCELLED
+      if unresolved then return true end
+    end
+  end
+
+  return false
+end
+
+---Describe whether an agent should keep working, wait, or finish.
+---@param agent_name string
+---@param category? string
+---@return "claimable"|"waiting"|"finished"
+function SwarmSession:get_agent_work_state(agent_name, category)
+  local agent = self.agents[agent_name]
+  if not agent then return "finished" end
+
+  local task_category = category or agent.category
+
+  if self:has_claimable_work(agent_name, task_category) then return "claimable" end
+  if self:has_category_work_remaining(task_category) then return "waiting" end
+
+  return "finished"
+end
+
+---Backward-compatible alias kept for callers not yet migrated.
+---@param agent_name string
+---@param category? string
+---@return boolean
+function SwarmSession:has_available_work(agent_name, category)
+  local work_state = self:get_agent_work_state(agent_name, category)
+  return work_state == "claimable" or work_state == "waiting"
 end
 
 ---Check if any alive agent can handle tasks in a given category
@@ -754,6 +810,16 @@ function SwarmSession:get_orphaned_categories()
   end
 
   return orphaned
+end
+
+---Check if any agents are actively working.
+---@return boolean
+function SwarmSession:any_agent_working()
+  for _, agent in pairs(self.agents) do
+    if agent.status == AGENT_STATUS.WORKING then return true end
+  end
+
+  return false
 end
 
 ---Get task by ID

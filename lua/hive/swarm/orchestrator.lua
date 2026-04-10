@@ -16,6 +16,9 @@ local subagent = require("hive.tools.subagent")
 local api = vim.api
 local fmt = string.format
 
+---@type table<string, SwarmOrchestrator>
+local _orchestrators = {}
+
 -- ============================================================================
 -- Constants
 -- ============================================================================
@@ -67,6 +70,7 @@ function SwarmOrchestrator.new(args)
   self.manager_aug = nil
 
   log:debug("[SwarmOrchestrator] Created for session %s", self.session.id)
+  _orchestrators[self.session.id] = self
 
   return self
 end
@@ -79,9 +83,8 @@ end
 ---@param tasks { content: string, category: string, priority?: string, dependencies?: string[] }[]
 ---@return SwarmOrchestrator self
 function SwarmOrchestrator:define_tasks(tasks)
-  for _, task_def in ipairs(tasks) do
-    self.session:add_task(task_def)
-  end
+  local _, err = self.session:add_tasks(tasks)
+  if err then error(err) end
 
   log:debug("[SwarmOrchestrator] Defined %d tasks", #tasks)
 
@@ -152,6 +155,7 @@ function SwarmOrchestrator:stop(reason)
   end
 
   self.session:complete(reason or "Stopped by manager")
+  _orchestrators[self.session.id] = nil
 end
 
 ---Fail the swarm
@@ -165,48 +169,103 @@ function SwarmOrchestrator:fail(error_msg)
   end
 
   self.session:fail(error_msg)
+  _orchestrators[self.session.id] = nil
 end
 
----Called when any agent transitions to completed or failed
----Checks for orphaned tasks and handles deadlock
-function SwarmOrchestrator:check_for_orphans()
-  local session_mod = require("hive.swarm.session")
-  if self.session.status ~= session_mod.SESSION_STATUS.ACTIVE then return end
+---Wake idle agents whose own category now has claimable work.
+---@return boolean woke_any
+function SwarmOrchestrator:_wake_idle_agents()
+  local woke_any = false
 
-  local orphaned = self.session:get_orphaned_categories()
-  if #orphaned == 0 then return end
-
-  -- Try to find idle agents that could cross-cover orphaned categories
-  local reassigned = false
-  for _, category in ipairs(orphaned) do
-    for _, agent in pairs(self.agents) do
-      if agent.status == "idle" or agent.status == "working" then
-        if agent.status == "idle" and not agent.current_task_id then
-          log:info(
-            "[SwarmOrchestrator] Reassigning idle agent '%s' to cover orphaned category '%s'",
-            agent.name,
-            category
+  for name, agent in pairs(self.agents) do
+    local session_agent = self.session:get_agent(name)
+    if session_agent and session_agent.status == "idle" then
+      local work_state = self.session:get_agent_work_state(name, session_agent.category)
+      if work_state == "claimable" then
+        agent:_resubmit(
+          fmt(
+            "Work is now available in category '%s'. Read messages, then claim_task(category='%s').",
+            session_agent.category,
+            session_agent.category
           )
-          agent:_resubmit(
-            fmt(
-              "Category '%s' has orphaned tasks with no agent. Claim tasks from that category using claim_task(category='%s').",
-              category,
-              category
-            )
-          )
-          reassigned = true
-          break
-        end
+        )
+        woke_any = true
       end
     end
   end
 
-  if not reassigned then
-    -- All agents done but tasks remain — deadlock
-    if self.session:all_agents_done() then
+  return woke_any
+end
+
+---Try to use idle agents to cover categories whose dedicated workers are gone.
+---@param orphaned string[]
+---@return boolean reassigned
+function SwarmOrchestrator:_reassign_orphans(orphaned)
+  local reassigned = false
+
+  for _, category in ipairs(orphaned) do
+    for name, agent in pairs(self.agents) do
+      local session_agent = self.session:get_agent(name)
+      if session_agent and session_agent.status == "idle" then
+        log:info(
+          "[SwarmOrchestrator] Reassigning idle agent '%s' to cover orphaned category '%s'",
+          agent.name,
+          category
+        )
+        agent:_resubmit(
+          fmt(
+            "Category '%s' has orphaned tasks with no live specialist. Claim tasks from that category using claim_task(category='%s').",
+            category,
+            category
+          )
+        )
+        reassigned = true
+        break
+      end
+    end
+  end
+
+  return reassigned
+end
+
+---Recompute the swarm state after an agent/task lifecycle transition.
+---@param _reason? string
+function SwarmOrchestrator:reconcile(_reason)
+  local session_mod = require("hive.swarm.session")
+  if self.session.status ~= session_mod.SESSION_STATUS.ACTIVE then
+    _orchestrators[self.session.id] = nil
+    return
+  end
+
+  if self.session:all_tasks_done() then
+    self.session:complete()
+    _orchestrators[self.session.id] = nil
+    return
+  end
+
+  self:_wake_idle_agents()
+
+  local orphaned = self.session:get_orphaned_categories()
+  if #orphaned > 0 then
+    local reassigned = self:_reassign_orphans(orphaned)
+    if not reassigned and not self.session:any_agent_working() then
       local orphan_list = table.concat(orphaned, ", ")
       self:fail(fmt("Deadlock: tasks remain in categories [%s] but no agents are alive to handle them", orphan_list))
+      return
     end
+  end
+
+  if self.session:all_agents_done() and self.session:has_unresolved_tasks() then
+    self:fail("All agents reached terminal states before all tasks were resolved")
+    return
+  end
+
+  if
+    self.session:has_unresolved_tasks()
+    and not self.session:any_agent_working()
+    and not self.session:has_any_claimable_tasks()
+  then
+    self:fail("Deadlock: unresolved tasks remain but no agent can make progress")
   end
 end
 
@@ -344,11 +403,11 @@ function SwarmOrchestrator:_start_status_timer()
 
       self:_render_status(spinner_char)
 
-      -- Debounced orphan check (every ~2s, not every tick)
+      -- Debounced reconcile as a fallback watchdog
       self._orphan_check_counter = (self._orphan_check_counter or 0) + 1
       if self._orphan_check_counter >= 10 then
         self._orphan_check_counter = 0
-        self:check_for_orphans()
+        self:reconcile("timer")
       end
     end,
   })
@@ -463,4 +522,8 @@ end
 return {
   SwarmOrchestrator = SwarmOrchestrator,
   ICONS = ICONS,
+  reconcile_session = function(session_id, reason)
+    local orchestrator = _orchestrators[session_id]
+    if orchestrator then orchestrator:reconcile(reason) end
+  end,
 }
