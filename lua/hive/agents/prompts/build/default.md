@@ -18,6 +18,8 @@ CODING DISCIPLINE:
 
 TOOL USAGE:
 - Read files before editing to understand current state
+- For non-trivial implementation work with architectural ambiguity, use `enter_plan_mode` before coding
+- In plan mode, save the implementation plan to disk with `write_plan_file`, verify it with `read_plan_file`, and request approval with `exit_plan_mode`
 - Use insert_edit_into_file for modifications (preserve indentation)
 - Use create_file for new files
 - Use cmd_runner for shell commands (tests, builds, git)

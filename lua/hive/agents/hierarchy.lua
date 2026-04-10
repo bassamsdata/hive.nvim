@@ -276,6 +276,7 @@ function M.build_status_text(bufnr)
   local status_icon = ({
     pending = "○",
     running = "◐",
+    idle = "◌",
     completed = "✓",
     failed = "✗",
     cancelled = "⊘",
@@ -290,6 +291,8 @@ function M.build_status_text(bufnr)
     if summary.current then table.insert(parts, string.format("  Current: `%s`", summary.current)) end
     if summary.total > 0 then table.insert(parts, string.format("  Tools: %d completed", summary.completed)) end
     table.insert(parts, string.format("  %s Working... (%s)", status_icon, elapsed))
+  elseif session.status == "idle" then
+    table.insert(parts, string.format("  %s Idle (%s)", status_icon, elapsed))
   elseif session.status == "completed" then
     table.insert(parts, string.format("  %s Completed (%d tools, %s)", status_icon, summary.total, elapsed))
   elseif session.status == "failed" then

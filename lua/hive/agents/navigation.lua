@@ -85,6 +85,12 @@ local function build_winbar(bufnr)
 
   if #parts == 0 then return nil end
 
+  local ok_spinner, spinner = pcall(require, "hive.spinner")
+  if ok_spinner then
+    local spinner_segment = spinner.get_winbar_segment(bufnr)
+    if spinner_segment then table.insert(parts, spinner_segment) end
+  end
+
   local winbar = " " .. table.concat(parts, "  │  ")
 
   if _show_model_info[bufnr] then

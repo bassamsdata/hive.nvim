@@ -34,6 +34,25 @@ M.tools = {
   consult = function()
     return (require("hive.tools.consult"))
   end,
+  team = function()
+    return (require("hive.tools.team"))
+  end,
+  enter_plan_mode = function()
+    local plan = require("hive.tools.plan")
+    return plan.get("enter_plan_mode")
+  end,
+  write_plan_file = function()
+    local plan = require("hive.tools.plan")
+    return plan.get("write_plan_file")
+  end,
+  read_plan_file = function()
+    local plan = require("hive.tools.plan")
+    return plan.get("read_plan_file")
+  end,
+  exit_plan_mode = function()
+    local plan = require("hive.tools.plan")
+    return plan.get("exit_plan_mode")
+  end,
   cmd_runner = function()
     return (require("hive.tools.cmd_runner"))
   end,
@@ -79,6 +98,22 @@ M.tools = {
   get_swarm_status = function()
     local worker = require("hive.swarm.tools.worker")
     return worker.get("get_swarm_status")
+  end,
+  complete_team_task = function()
+    local worker = require("hive.team.worker")
+    return worker.get("complete_team_task")
+  end,
+  block_team_task = function()
+    local worker = require("hive.team.worker")
+    return worker.get("block_team_task")
+  end,
+  send_team_update = function()
+    local worker = require("hive.team.worker")
+    return worker.get("send_team_update")
+  end,
+  get_team_status = function()
+    local worker = require("hive.team.worker")
+    return worker.get("get_team_status")
   end,
 }
 

@@ -14,9 +14,11 @@ Author: bassamsdata | github.com/bassamsdata/hive.nvim
 
 local api = vim.api
 local log = require("codecompanion.utils.log")
+local adapters = require("codecompanion.adapters")
 local ThresholdEvaluator = require("hive.context_lifecycle.thresholds")
 local CompactionEngine = require("hive.context_lifecycle.compaction")
 local notify = require("hive.utils.notify")
+local subagent_models = require("hive.tools.subagent.models")
 
 local function _debug(msg)
   require("hive.debug").log("context_lifecycle", msg)
@@ -49,7 +51,7 @@ local DEFAULT_CONFIG = {
 ---@field _evaluator ThresholdEvaluator
 ---@field _compactor CompactionEngine
 ---@field _compacting table<number, boolean> bufnr → in-progress flag (re-entrancy guard)
----@field _skip_compact table<number, boolean> bufnr → skip next compaction (after failure)
+---@field _skip_compact table<number, boolean> bufnr → skip next compaction (after failure or immediate post-compaction resubmit)
 ---@field _last_eval table<number, ContextLifecycle.Evaluation> bufnr → last evaluation
 ---@field _aug_id number|nil autocmd group ID
 local ContextLifecycleManager = {}
@@ -99,7 +101,7 @@ function ContextLifecycleManager:setup_events()
 
   -- Post-response: evaluate for nudges + update prunable list
   api.nvim_create_autocmd("User", {
-    pattern = { "CodeCompanionChatDone", "CodeCompanionToolsFinished" },
+    pattern = "CodeCompanionChatDone",
     group = self._aug_id,
     callback = function(event)
       local bufnr = event.data and event.data.bufnr
@@ -161,9 +163,9 @@ function ContextLifecycleManager:_on_before_submit(chat)
     return nil
   end
 
-  -- Skip guard: don't compact again after a failure
+  -- Skip guard: don't compact again after a failure or on immediate post-compaction resubmit
   if self._skip_compact[bufnr] then
-    _debug(string.format("_on_before_submit: bufnr=%d skipped (post-failure bypass)", bufnr))
+    _debug(string.format("_on_before_submit: bufnr=%d skipped (failure/post-compaction bypass)", bufnr))
     self._skip_compact[bufnr] = nil
     return nil
   end
@@ -252,6 +254,11 @@ function ContextLifecycleManager:_run_compaction(chat, eval)
     self._compacting[bufnr] = nil
 
     if success then
+      self._skip_compact[bufnr] = true
+      if chat.ui then chat.ui.tokens = nil end
+      local metadata = _G.codecompanion_chat_metadata and _G.codecompanion_chat_metadata[bufnr]
+      if metadata then metadata.tokens = nil end
+
       _debug(string.format("_run_compaction: bufnr=%d compaction complete, resubmitting", bufnr))
 
       -- Update pruning manager state (clear pruned IDs since messages were rebuilt)
@@ -264,7 +271,7 @@ function ContextLifecycleManager:_run_compaction(chat, eval)
       _debug(string.format("_run_compaction: bufnr=%d rebuild failed", bufnr))
     end
 
-    -- Resubmit with compacted messages
+    -- Resubmit with compacted messages (one-shot compaction bypass already armed)
     vim.schedule(function()
       chat:submit()
     end)
@@ -284,6 +291,27 @@ function ContextLifecycleManager:_call_llm_for_summary(chat, messages, callback)
   end
 
   local adapter = vim.deepcopy(chat.adapter)
+  local override = subagent_models.parse_model_string(self.config.compaction.compaction_model)
+
+  if override then
+    local resolve_ok, resolved = pcall(adapters.resolve, override.adapter)
+    if not resolve_ok or not resolved then
+      callback(nil, "Failed to resolve compaction adapter: " .. override.adapter)
+      return
+    end
+
+    local set_ok, overridden = pcall(adapters.set_model, {
+      adapter = resolved,
+      model = override.model,
+    })
+    if not set_ok or not overridden then
+      callback(nil, "Failed to configure compaction model: " .. tostring(self.config.compaction.compaction_model))
+      return
+    end
+
+    adapter = overridden
+  end
+
   if adapter.opts then adapter.opts.stream = false end
 
   local bg = Background.new({ adapter = adapter })

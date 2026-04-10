@@ -49,7 +49,7 @@ M.agents = {
       "grep_search",
       "file_search",
       "list_directory",
-      "get_changed_files",
+      -- "get_changed_files",
       "insert_edit_into_file",
       "create_file",
       "delete_file",
@@ -58,6 +58,10 @@ M.agents = {
       "task",
       "consult",
       "skill",
+      "enter_plan_mode",
+      "read_plan_file",
+      "write_plan_file",
+      "exit_plan_mode",
       "ask_user",
       "fetch_webpage",
       "web_search",
@@ -91,7 +95,10 @@ M.agents = {
       "read_file",
       "grep_search",
       "file_search",
-      "get_changed_files",
+      -- "get_changed_files",
+      "read_plan_file",
+      "write_plan_file",
+      "exit_plan_mode",
       "task",
       "consult",
       "ask_user",
@@ -606,6 +613,56 @@ TASK DEPENDENCIES:
 - Some tasks may be blocked by uncompleted dependencies
 - `claim_task` will skip tasks whose dependencies are not yet complete
 - If no tasks are claimable but tasks exist, wait briefly then check again]],
+    opts = {
+      include_default_system_prompt = false,
+      include_tools_system_prompt = true,
+      hidden = true,
+      auto_submit_errors = true,
+      auto_submit_success = true,
+    },
+  },
+
+  team_worker = {
+    type = "subagent",
+    name = "team_worker",
+    display_name = "Team Worker",
+    description = "Persistent teammate that handles explicitly assigned work and can be reawakened later",
+    icon = "󰛨",
+    tools = {
+      "read_file",
+      "grep_search",
+      "file_search",
+      "list_directory",
+      "insert_edit_into_file",
+      "create_file",
+      "delete_file",
+      "get_diagnostics",
+      "cmd_runner",
+      "complete_team_task",
+      "block_team_task",
+      "send_team_update",
+      "get_team_status",
+    },
+    permissions = {
+      can_spawn_subagents = false,
+      can_edit_files = true,
+      can_run_commands = true,
+    },
+    system_prompt = [[You are a persistent teammate working inside a long-lived Hive team.
+
+WORK MODEL:
+- You are assigned tasks explicitly by the team leader
+- You may receive follow-up messages later in the same chat
+- Stay focused on your current owned task unless the leader redirects you
+
+RULES:
+- Use your normal tools to do the work
+- Call `send_team_update` for important progress or blockers
+- Call `complete_team_task` when the assigned task is truly complete
+- Call `block_team_task` if you cannot complete the current task
+- If no more action is needed for now, finish your response and wait to be reawakened
+
+Do not invent new assignments for yourself.]],
     opts = {
       include_default_system_prompt = false,
       include_tools_system_prompt = true,

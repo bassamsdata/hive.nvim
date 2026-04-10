@@ -114,6 +114,10 @@ M.defaults = {
       right_offset = 1,
       enabled = true,
     },
+    winbar = {
+      enabled = true,
+      format = "model_adapter",
+    },
   },
 
   sys_notify = {
@@ -140,6 +144,11 @@ M.defaults = {
     get_diagnostics = { enabled = true },
     task = { enabled = true },
     consult = { enabled = true },
+    team = { enabled = true },
+    enter_plan_mode = { enabled = true },
+    write_plan_file = { enabled = true },
+    read_plan_file = { enabled = true },
+    exit_plan_mode = { enabled = true },
     ask_user = { enabled = true },
     skill = { enabled = true },
     list_directory = { enabled = true },
@@ -168,6 +177,11 @@ M.defaults = {
     send_to_peer = { enabled = true },
     read_messages = { enabled = true },
     get_swarm_status = { enabled = true },
+    -- [[ Team Tools ]]
+    complete_team_task = { enabled = true },
+    block_team_task = { enabled = true },
+    send_team_update = { enabled = true },
+    get_team_status = { enabled = true },
     status = {
       scroll_to_show = true,
       scroll_cursor_distance = 10, -- lines from bottom to trigger scroll
@@ -232,7 +246,7 @@ M.defaults = {
   },
 
   context_pruning = {
-    protected_tools = { "prune", "task", "todowrite", "todoread", "consult", "ask_user", "swarm" },
+    protected_tools = { "prune", "task", "todowrite", "todoread", "consult", "ask_user", "swarm", "team" },
     min_tokens = 5000, -- Only inject prunable list when total prunable tokens ≥ this
     delta_tokens = 3000, -- Only re-inject when prunable tokens changed by ≥ this since last injection
   },
@@ -248,7 +262,7 @@ M.defaults = {
     notify = true, -- Notify user on compaction
     compaction = {
       recent_budget = 20000, -- Token budget for recent messages
-      preserve_last_assistant = true, -- Keep last assistant message
+      preserve_last_assistant = false, -- Keep last assistant message
       compaction_model = nil, -- nil = same adapter, "adapter/model" = override
       notify = true,
       max_compactions = 3, -- Warn after this many compactions

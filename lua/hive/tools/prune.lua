@@ -157,8 +157,6 @@ return {
 
       local result = manager:prune(chat, numeric_ids)
 
-      manager:update_prunable_message(chat, nil, { force = true })
-
       local parts = {}
       table.insert(parts, fmt("Pruned %d tool output(s), saving ~%d tokens.", result.pruned, result.tokens_saved))
       if #result.skipped > 0 then

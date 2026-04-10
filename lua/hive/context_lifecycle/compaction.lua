@@ -22,35 +22,69 @@ local SUMMARY_MARKER = "compaction_summary_message"
 
 ---@class CompactionEngine.Config
 ---@field recent_budget number Token budget for preserving recent messages (default 20000)
----@field preserve_last_assistant boolean Keep the last assistant message (default true)
+---@field preserve_last_assistant boolean Keep the last assistant message (default false)
 ---@field compaction_model string|nil nil = same adapter, "adapter/model" = override
 ---@field notify boolean Notify user on compaction (default true)
 ---@field max_compactions number Max compactions before warning (default 3)
 ---@field compaction_prompt string|nil Custom compaction prompt (nil = default)
 ---@field summary_prefix string|nil Custom summary prefix (nil = default)
 
+local NO_TOOLS_PREAMBLE = [[Your task is to create a detailed continuation summary of this conversation.
+This summary will be used to continue the session after older history is compacted away.
+Do not call tools. Respond with plain text only.
+
+]]
+
 local DEFAULT_COMPACTION_PROMPT =
-  [[You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for yourself (the same LLM) that will continue the task in this same conversation.
+  [[Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts.
+Then provide the final continuation summary in <summary> tags.
 
-Include:
-- Current progress and key decisions made so far
-- Important context, constraints, or user preferences discovered
-- What task/work is currently in progress and its state
-- What remains to be done (clear next steps)
-- Any critical data, file paths, code patterns, or references needed to continue
-- The current working approach/strategy being used
+Your summary should be structured, concise, and actionable. Include:
+1. Task Overview
+- The user's core request and success criteria
+- Any clarifications or constraints they specified
 
-Be concise and structured. Focus on enabling seamless continuation.
-Do NOT include pleasantries or meta-commentary about compaction.]]
+2. Current State
+- What has been completed so far
+- Files created, modified, or analyzed (with paths if relevant)
+- Key outputs or artifacts produced
 
-local DEFAULT_SUMMARY_PREFIX = [[<compaction_context>
-The conversation history has been compacted to manage context window usage. Below is a structured summary of the work done so far. Use this to continue seamlessly without repeating completed work.
+3. Important Discoveries
+- Technical constraints or requirements uncovered
+- Decisions made and their rationale
+- Errors encountered and how they were resolved
+- Approaches that did not work and why
 
-</compaction_context>]]
+4. Next Steps
+- Specific actions needed to complete the task
+- Any blockers or open questions to resolve
+- Priority order if multiple steps remain
+
+5. Context to Preserve
+- User preferences or style requirements
+- Domain-specific details that are easy to lose
+- Any promises made to the user
+
+Be concise but complete. Include enough detail to prevent duplicate work or repeated mistakes.
+Wrap your final answer in <summary></summary> tags.]]
+
+local NO_TOOLS_TRAILER = [[
+
+REMINDER: Do NOT call any tools. Respond with plain text only — an <analysis> block followed by a <summary> block.]]
+
+local DEFAULT_SUMMARY_PREFIX =
+  [[This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+]]
+
+local DEFAULT_SUMMARY_CONTINUATION = [[
+
+Recent messages are preserved verbatim.
+Continue the conversation from where it left off without acknowledging the summary, recapping prior work, or asking the user to repeat information that is already available. Pick up the last task as if the break never happened.]]
 
 local DEFAULT_CONFIG = {
   recent_budget = 20000,
-  preserve_last_assistant = true,
+  preserve_last_assistant = false,
   compaction_model = nil,
   notify = true,
   max_compactions = 3,
@@ -143,13 +177,37 @@ end
 ---@param messages table[]
 ---@return string
 function CompactionEngine:_build_compaction_prompt(messages)
-  return self.config.compaction_prompt or DEFAULT_COMPACTION_PROMPT
+  local prompt = self.config.compaction_prompt or DEFAULT_COMPACTION_PROMPT
+  return NO_TOOLS_PREAMBLE .. prompt .. NO_TOOLS_TRAILER
 end
 
 ---Get the summary prefix text
 ---@return string
 function CompactionEngine:_get_summary_prefix()
   return self.config.summary_prefix or DEFAULT_SUMMARY_PREFIX
+end
+
+---Format raw compaction output by stripping analysis and extracting summary content
+---@param summary string
+---@return string
+function CompactionEngine:_format_summary(summary)
+  local formatted = summary
+
+  formatted = formatted:gsub("<analysis>[%z\1-\255]-</analysis>", "")
+
+  local extracted = formatted:match("<summary>([%z\1-\255]-)</summary>")
+  if extracted then formatted = "Summary:\n" .. vim.trim(extracted) end
+
+  formatted = formatted:gsub("\n\n+", "\n\n")
+  return vim.trim(formatted)
+end
+
+---Build the carried-forward summary message content
+---@param summary string
+---@return string
+function CompactionEngine:_build_summary_message(summary)
+  local formatted = self:_format_summary(summary)
+  return self:_get_summary_prefix() .. formatted .. DEFAULT_SUMMARY_CONTINUATION
 end
 
 ---Build the messages payload for the compaction LLM call
@@ -164,7 +222,9 @@ function CompactionEngine:build_compaction_payload(chat, context_window)
   local messages = {}
 
   for _, msg in ipairs(chat.messages) do
-    if msg.content and msg.content ~= "" and msg.role ~= "tool" then
+    local is_compaction = msg._meta and (msg._meta.tag == COMPACTION_TAG or msg._meta.tag == SUMMARY_MARKER)
+
+    if not is_compaction and msg.content and msg.content ~= "" and msg.role ~= "tool" then
       table.insert(messages, {
         role = msg.role,
         content = msg.content,
@@ -259,11 +319,11 @@ function CompactionEngine:rebuild_messages(chat, summary)
   -- 1. Extract system messages (always preserved)
   local system_msgs = self:_extract_system_messages(chat.messages)
 
-  -- 2. Collect recent user + last assistant messages
+  -- 2. Collect recent user messages (optionally preserving the last assistant message)
   local recent_msgs = self:_collect_recent(chat.messages)
 
   -- 3. Build the summary with prefix
-  local full_summary = self:_get_summary_prefix() .. summary
+  local full_summary = self:_build_summary_message(summary)
 
   -- 4. Track compaction count
   local bufnr = chat.bufnr
@@ -293,9 +353,14 @@ function CompactionEngine:rebuild_messages(chat, summary)
     table.insert(messages, sys_msg)
   end
 
-  -- Add compaction summary as a system message
+  -- Add recent messages
+  for _, msg in ipairs(recent_msgs) do
+    table.insert(messages, msg)
+  end
+
+  -- Add compaction summary as the final user handoff message
   table.insert(messages, {
-    role = cc_config.constants.SYSTEM_ROLE,
+    role = cc_config.constants.USER_ROLE,
     content = full_summary,
     opts = { visible = false },
     _meta = {
@@ -304,11 +369,6 @@ function CompactionEngine:rebuild_messages(chat, summary)
       compaction_number = count,
     },
   })
-
-  -- Add recent messages
-  for _, msg in ipairs(recent_msgs) do
-    table.insert(messages, msg)
-  end
 
   -- 6. Warn after multiple compactions
   if count >= self.config.max_compactions and self.config.notify then

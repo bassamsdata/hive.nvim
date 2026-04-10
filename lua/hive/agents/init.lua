@@ -159,6 +159,9 @@ function M._setup_chat_events()
         local ok, todo = pcall(require, "hive.tools.todo")
         if ok then todo.clear_todos(bufnr) end
 
+        local ok_plan, plan = pcall(require, "hive.plan")
+        if ok_plan and plan then plan.clear(bufnr) end
+
         M._chat_agents[bufnr] = nil
         hierarchy.remove(bufnr)
 
@@ -366,6 +369,21 @@ function M._register_tools()
       or "Ask the user clarifying questions",
     opts = {},
   }
+
+  local plan_tools = require("hive.tools.plan")
+  for _, tool_name in ipairs({ "enter_plan_mode", "write_plan_file", "read_plan_file", "exit_plan_mode" }) do
+    local plan_tool = plan_tools.get(tool_name)
+    if plan_tool then
+      chat_tools[tool_name] = {
+        callback = function()
+          return require("hive.tools.plan").get(tool_name)
+        end,
+        description = plan_tool.schema and plan_tool.schema["function"] and plan_tool.schema["function"].description
+          or "Plan workflow tool",
+        opts = {},
+      }
+    end
+  end
 
   local skills = require("hive.skills")
   if skills.has_skills() then
@@ -650,6 +668,17 @@ function M.activate(agent_name, chat, opts)
   M._save_original_opts()
 
   local previous_agent = current_agent
+  if agent_name == "plan" then
+    local ok_plan, plan = pcall(require, "hive.plan")
+    if ok_plan and plan and not plan.is_active(chat.bufnr) then
+      local _, plan_err = plan.enter(chat, { activate = false })
+      if plan_err then
+        if not opts.silent then notify(plan_err, vim.log.levels.ERROR) end
+        return false
+      end
+    end
+  end
+
   if current_agent then M._cleanup_current_agent(chat, current_agent) end
   M._apply_agent(chat, agent, agent_name)
   M._chat_agents[chat.bufnr] = agent_name
@@ -905,6 +934,8 @@ function M._apply_agent_system_prompt(chat, agent, agent_name)
     or (M._config.model_prompts and M._config.model_prompts[agent_name])
   then
     local prompt = M._resolve_system_prompt(chat, agent, agent_name)
+    local ok_plan, plan = pcall(require, "hive.plan")
+    if ok_plan and plan and plan.prompt_suffix then prompt = (prompt or "") .. plan.prompt_suffix(chat.bufnr) end
 
     if prompt and prompt ~= "" then
       local config = require("codecompanion.config")
@@ -938,6 +969,25 @@ function M._apply_agent_opts(agent)
   if opts.auto_submit_errors ~= nil then tools_opts.auto_submit_errors = opts.auto_submit_errors end
 
   if opts.auto_submit_success ~= nil then tools_opts.auto_submit_success = opts.auto_submit_success end
+end
+
+---@param chat table
+function M.refresh_active_agent(chat)
+  if not chat or not chat.bufnr then return false end
+
+  local agent_name = M._chat_agents[chat.bufnr]
+  if not agent_name then return false end
+
+  local agent = M._agents[agent_name]
+  if not agent then return false end
+
+  local opts = agent.opts or {}
+  if not opts.include_default_system_prompt then chat:remove_tagged_message("system_prompt_from_config") end
+
+  chat:remove_tagged_message("agent_system_prompt")
+  M._apply_agent_system_prompt(chat, agent, agent_name)
+
+  return true
 end
 
 ---Deactivate current agent, restoring defaults

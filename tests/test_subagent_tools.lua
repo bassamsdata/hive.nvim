@@ -244,6 +244,28 @@ T["tools"]["task cmds reports error for empty task list"] = function()
   expect.equality(result.data:find("No tasks provided", 1, true) ~= nil, true)
 end
 
+T["tools"]["task prompt defaults missing subagent_type to explorer"] = function()
+  local result = child.lua([[
+    local task = require("hive.tools.task")
+
+    local ok, prompt = pcall(task.output.prompt, {
+      args = {
+        tasks = {
+          { description = "Inspect the codebase", prompt = "Find relevant files" },
+        },
+      },
+    }, {})
+
+    return {
+      ok = ok,
+      prompt = prompt,
+    }
+  ]])
+
+  expect.equality(result.ok, true)
+  expect.equality(result.prompt:find("Explorer", 1, true) ~= nil, true)
+end
+
 T["tools"]["consult cmds rejects non advisor subagent types"] = function()
   local result = child.lua([[
     local consult = require("hive.tools.consult")
@@ -394,6 +416,125 @@ T["tools"]["task cmds executes mocked subagents and returns consolidated result"
   expect.equality(result.data:find('<subagent_result agent="explorer"', 1, true) ~= nil, true)
   expect.equality(result.data:find('<subagent_result agent="analyzer"', 1, true) ~= nil, true)
   expect.equality(result.data:find("2 succeeded", 1, true) ~= nil, true)
+end
+
+T["tools"]["task cmds defaults invalid subagent_type to explorer"] = function()
+  local result = child.lua([=[
+    package.loaded["hive.tools.task"] = nil
+    package.loaded["hive.tools.subagent"] = nil
+    package.loaded["hive.tools.subagent.models"] = nil
+
+    local hierarchy = require("hive.agents.hierarchy")
+    hierarchy.clear()
+
+    local function make_timer()
+      return {
+        stop = function() end,
+        close = function() end,
+        is_closing = function()
+          return false
+        end,
+      }
+    end
+
+    local next_bufnr = 700
+    local lifecycle = {}
+
+    lifecycle.spawn_child = function(_args)
+      next_bufnr = next_bufnr + 1
+      local child_chat = {
+        bufnr = next_bufnr,
+        status = "success",
+        stop = function() end,
+      }
+      return child_chat, next_bufnr
+    end
+
+    lifecycle.setup_listeners = function(args)
+      if args.callbacks.on_done then args.callbacks.on_done({ data = { bufnr = args.child_bufnr } }) end
+      return args.child_bufnr + 1000
+    end
+
+    lifecycle.cleanup_listeners = function() end
+
+    package.loaded["hive.tools.subagent"] = {
+      utils = {
+        SPINNER_FRAMES = { "-" },
+        STATUS_ICONS = {
+          pending = ".",
+          running = ">",
+          completed = "✓",
+          failed = "✗",
+          cancelled = "x",
+          timer = "t",
+          tools = "u",
+        },
+        IDLE_TIMEOUT_MS = 120000,
+        capitalize = function(name)
+          return name:sub(1, 1):upper() .. name:sub(2)
+        end,
+        format_duration = function(_ms)
+          return "1.0s"
+        end,
+        get_elapsed_ms = function(_start)
+          return 1000
+        end,
+        create_spinner_timer = function(_args)
+          return make_timer()
+        end,
+        create_timeout_timer = function(_args)
+          return make_timer()
+        end,
+        safe_close_timer = function(timer)
+          if timer and not timer:is_closing() then
+            timer:stop()
+            timer:close()
+          end
+        end,
+        fire = function() end,
+        truncate = function(text, _max)
+          return text
+        end,
+      },
+      status = {
+        render = function() end,
+        clear = function() end,
+        clear_after_delay = function() end,
+      },
+      lifecycle = lifecycle,
+      messages = {
+        extract_result_with_tools = function(args)
+          return "Result from " .. tostring(args.child_bufnr), 0
+        end,
+      },
+    }
+
+    package.loaded["hive.tools.subagent.models"] = {
+      detect_suspicious_fast_completion = function(_args)
+        return false, nil
+      end,
+    }
+
+    local task = require("hive.tools.task")
+    local callback_result = nil
+
+    task.cmds[1]({
+      chat = { bufnr = 91 },
+    }, {
+      tasks = {
+        { subagent_type = "UNKNOWN", description = "Inspect the codebase", prompt = "Find relevant files" },
+      },
+    }, {
+      output_cb = function(res)
+        callback_result = res
+      end,
+    })
+
+    return callback_result
+  ]=])
+
+  expect.equality(result.status, "success")
+  expect.equality(result.data:find('<subagent_result agent="explorer"', 1, true) ~= nil, true)
 end
 
 T["tools"]["consult cmds executes mocked advisor and returns consultation result"] = function()

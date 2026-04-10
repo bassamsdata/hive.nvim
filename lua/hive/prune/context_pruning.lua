@@ -38,7 +38,7 @@ function PruningManager.new(config)
   self._config = vim.tbl_deep_extend("force", {
     protected_tools = { "prune", "task", "todowrite", "todoread", "consult", "ask_user" },
     min_tokens = 5000,
-    delta_tokens = 3000,
+    delta_tokens = 5000,
   }, config or {})
   self._protected_set = {}
   for _, name in ipairs(self._config.protected_tools) do
@@ -381,7 +381,7 @@ function PruningManager:setup_events()
   local group = api.nvim_create_augroup("HiveContextPruning", { clear = true })
 
   api.nvim_create_autocmd("User", {
-    pattern = { "CodeCompanionChatDone", "CodeCompanionToolsFinished" },
+    pattern = "CodeCompanionChatDone",
     group = group,
     callback = function(event)
       local bufnr = event.data and event.data.bufnr

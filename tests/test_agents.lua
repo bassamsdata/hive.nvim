@@ -11,6 +11,8 @@ local T = new_set({
       child.lua([[
         vim.opt.rtp:prepend(".")
 
+        vim.fn.delete(vim.fs.joinpath(vim.fn.getcwd(), ".hive"), "rf")
+
         local function tool(description)
           return {
             schema = {
@@ -74,6 +76,9 @@ local T = new_set({
         package.loaded["hive.tools.subagent.model_picker"] = {
           setup = function() end,
         }
+        package.loaded["hive.confirm"] = function(opts)
+          opts.on_choice(1, "Approve")
+        end
         package.loaded["hive.agent_manager"] = {
           toggle = function() end,
         }
@@ -244,6 +249,8 @@ local T = new_set({
         package.loaded["hive.agents"] = nil
         package.loaded["hive.agents.registry"] = nil
         package.loaded["hive.agents.hierarchy"] = nil
+        package.loaded["hive.plan"] = nil
+        package.loaded["hive.tools.plan"] = nil
 
         local agents = require("hive.agents")
         agents.setup({
@@ -267,6 +274,7 @@ T["agents"]["activate applies plan agent prompt, tools, and session"] = function
   local summary = child.lua([[
     local agents = require("hive.agents")
     local hierarchy = require("hive.agents.hierarchy")
+    local plan = require("hive.plan")
 
     local chat = _G.new_chat(101, "model-a")
     local ok = agents.activate("plan", chat, { silent = true })
@@ -289,10 +297,13 @@ T["agents"]["activate applies plan agent prompt, tools, and session"] = function
     end
 
     local session = hierarchy.get_session(chat.bufnr)
+    local state = plan.get(chat.bufnr)
 
     return {
       ok = ok,
       active = agents.active(chat.bufnr),
+      plan_active = plan.is_active(chat.bufnr),
+      plan_file_exists = state and vim.uv.fs_stat(state.file_path) ~= nil or false,
       agent_prompt_count = tags.agent_system_prompt or 0,
       has_default_prompt = (tags.system_prompt_from_config or 0) > 0,
       has_group = has_group,
@@ -305,6 +316,8 @@ T["agents"]["activate applies plan agent prompt, tools, and session"] = function
 
   expect.equality(summary.ok, true)
   expect.equality(summary.active, "plan")
+  expect.equality(summary.plan_active, true)
+  expect.equality(summary.plan_file_exists, true)
   expect.equality(summary.agent_prompt_count, 1)
   expect.equality(summary.has_default_prompt, false)
   expect.equality(summary.has_group, true)
@@ -312,6 +325,7 @@ T["agents"]["activate applies plan agent prompt, tools, and session"] = function
   expect.equality(summary.session_agent, "plan")
   expect.equality(summary.session_type, "agent")
   expect.equality(summary.prompt_content:find("PROMPT:plan|Adapter:test_adapter/model-a", 1, true) ~= nil, true)
+  expect.equality(summary.prompt_content:find("<plan%-workflow>", 1) ~= nil, true)
 end
 
 T["agents"]["cycle switches between build and plan in sorted order"] = function()
@@ -418,6 +432,85 @@ T["agents"]["model change event refreshes prompt without duplicates"] = function
   expect.equality(summary.count, 1)
   expect.equality(summary.before == summary.after, false)
   expect.equality(summary.after:find("PROMPT:build|Adapter:test_adapter/model-b", 1, true) ~= nil, true)
+end
+
+T["agents"]["entering plan mode creates plan file and augments prompt"] = function()
+  local summary = child.lua([[
+    local agents = require("hive.agents")
+    local plan = require("hive.plan")
+    local chat = _G.new_chat(105, "model-a")
+
+    agents.activate("build", chat, { silent = true })
+    local state = assert(plan.enter(chat))
+
+    local prompt = ""
+    for _, msg in ipairs(chat.messages) do
+      if msg._meta and msg._meta.tag == "agent_system_prompt" then prompt = msg.content end
+    end
+
+    return {
+      active = agents.active(chat.bufnr),
+      file_exists = vim.uv.fs_stat(state.file_path) ~= nil,
+      path = state.file_path,
+      has_suffix = prompt:find("<plan%-workflow>", 1) ~= nil,
+    }
+  ]])
+
+  expect.equality(summary.active, "plan")
+  expect.equality(summary.file_exists, true)
+  expect.equality(summary.path:find("/.hive/plans/chat%-105%.md$") ~= nil, true)
+  expect.equality(summary.has_suffix, true)
+end
+
+T["agents"]["plan tools write read and exit back to build"] = function()
+  local summary = child.lua([[
+    local agents = require("hive.agents")
+    local plan_tools = require("hive.tools.plan")
+    local chat = _G.new_chat(106, "model-a")
+
+    agents.activate("build", chat, { silent = true })
+
+    local enter = assert(plan_tools.get("enter_plan_mode"))
+    local write = assert(plan_tools.get("write_plan_file"))
+    local read = assert(plan_tools.get("read_plan_file"))
+    local exit = assert(plan_tools.get("exit_plan_mode"))
+
+    local enter_result = enter.cmds[1]({ chat = chat }, {}, {})
+    vim.wait(1000, function()
+      return agents.active(chat.bufnr) == "plan"
+    end)
+    local write_result = write.cmds[1]({ chat = chat }, { content = "# Plan\n\n1. Inspect\n2. Implement" }, {})
+    local read_result = read.cmds[1]({ chat = chat }, {}, {})
+
+    local exit_result = nil
+    exit.cmds[1]({ chat = chat }, { summary = "Implement with approval" }, {
+      output_cb = function(result)
+        exit_result = result
+      end,
+    })
+
+    vim.wait(1000, function()
+      return exit_result ~= nil
+    end)
+
+    return {
+      enter_status = enter_result.status,
+      write_status = write_result.status,
+      read_status = read_result.status,
+      exit_status = exit_result and exit_result.status or "missing",
+      active = agents.active(chat.bufnr),
+      read_has_plan = read_result.data:find("# Plan", 1, true) ~= nil,
+      exit_mentions_build = exit_result and exit_result.data:find("Returned to `build` mode.", 1, true) ~= nil or false,
+    }
+  ]])
+
+  expect.equality(summary.enter_status, "success")
+  expect.equality(summary.write_status, "success")
+  expect.equality(summary.read_status, "success")
+  expect.equality(summary.exit_status, "success")
+  expect.equality(summary.active, "build")
+  expect.equality(summary.read_has_plan, true)
+  expect.equality(summary.exit_mentions_build, true)
 end
 
 return T

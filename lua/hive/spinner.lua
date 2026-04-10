@@ -74,6 +74,11 @@ local CONSTANTS = {
   },
 }
 
+local VALID_WINBAR_FORMATS = {
+  model_only = true,
+  model_adapter = true,
+}
+
 local DEFAULT_CONFIG = {
   spinner = {
     frames = CONSTANTS.SPINNER_FRAMES.binary,
@@ -99,6 +104,10 @@ local DEFAULT_CONFIG = {
     right_offset = CONSTANTS.RIGHT_OFFSET,
     enabled = true,
   },
+  winbar = {
+    enabled = false,
+    format = "model_adapter",
+  },
 }
 
 local Spinner = {}
@@ -121,6 +130,7 @@ function Spinner.new(config)
   }
   self:_validate_spinner_frames()
   self:_validate_subagent_spinner_frames()
+  self:_validate_winbar_format()
   return self
 end
 
@@ -130,6 +140,14 @@ end
 
 function Spinner:_validate_subagent_spinner_frames()
   self.config.subagent_spinner.frames = self:_resolve_frames(self.config.subagent_spinner.frames)
+end
+
+function Spinner:_validate_winbar_format()
+  local format = self.config.winbar and self.config.winbar.format or DEFAULT_CONFIG.winbar.format
+  if VALID_WINBAR_FORMATS[format] then return end
+
+  notify(string.format("Spinner: Invalid winbar format '%s', using default", tostring(format)), vim.log.levels.WARN)
+  self.config.winbar.format = DEFAULT_CONFIG.winbar.format
 end
 
 function Spinner:_resolve_frames(frames)
@@ -164,6 +182,82 @@ end
 
 function Spinner:_get_subagent_spinner_char()
   return self.config.subagent_spinner.frames[self.state.subagent_frame]
+end
+
+function Spinner:_show_winbar()
+  return self.config.winbar and self.config.winbar.enabled == true
+end
+
+---@param entity table
+---@return string|nil
+function Spinner:_entity_model(entity)
+  local model = entity and entity.model
+  if type(model) == "table" then model = model.name or model.default or model.id or model.model end
+  return model and tostring(model) or nil
+end
+
+---@param entity table
+---@param opts? { format?: "model_only"|"model_adapter" }
+---@return table[]|nil
+function Spinner:_build_metadata_chunks(entity, opts)
+  opts = opts or {}
+  local format = opts.format or "model_adapter"
+  local show_adapter = format == "model_adapter"
+  local model = self:_entity_model(entity)
+  local chunks = {}
+
+  if model then table.insert(chunks, { model, "SpinnerInfo" }) end
+
+  if show_adapter and entity.adapter then
+    if #chunks > 0 then table.insert(chunks, { " ", "SpinnerInfo" }) end
+    table.insert(chunks, { "(", "SpinnerDim" })
+    table.insert(chunks, { entity.adapter, "SpinnerInfo" })
+    table.insert(chunks, { ")", "SpinnerDim" })
+  end
+
+  if show_adapter and entity.provider then
+    if #chunks > 0 then table.insert(chunks, { " · ", "SpinnerDim" }) end
+    table.insert(chunks, { entity.provider, "SpinnerProvider" })
+  end
+
+  if #chunks == 0 then return nil end
+  return chunks
+end
+
+---@param chunks table[]
+---@return string
+function Spinner:_chunks_to_winbar_text(chunks)
+  local parts = {}
+
+  for _, chunk in ipairs(chunks or {}) do
+    local text = chunk[1]
+    local hl = chunk[2]
+
+    if type(text) == "string" and text ~= "" then
+      text = text:gsub("%%", "%%%%")
+      if hl and hl ~= "" then
+        table.insert(parts, string.format("%%#%s#%s%%*", hl, text))
+      else
+        table.insert(parts, text)
+      end
+    end
+  end
+
+  return table.concat(parts)
+end
+
+---@param parent table
+---@return table[]
+function Spinner:_build_winbar_indicator_chunks(parent)
+  if parent.status == "completed" then
+    return { { "✓", "SpinnerSuccess" } }
+  elseif parent.status == "error" then
+    return { { "✗", "SpinnerError" } }
+  elseif parent.status == "cancelled" then
+    return { { "■", "SpinnerDim" } }
+  end
+
+  return { { self:_get_spinner_char(), "SpinnerActive" } }
 end
 
 function Spinner:_format_time(seconds)
@@ -290,18 +384,7 @@ end
 
 function Spinner:_build_adapter_line(parent)
   if not self.config.display.show_model then return nil end
-  local chunks = {}
-  local model = parent.model
-  if type(model) == "table" then model = model.name or model.default or model.id or model.model end
-  if model then table.insert(chunks, { tostring(model), "SpinnerInfo" }) end
-  if parent.adapter then
-    if #chunks > 0 then table.insert(chunks, { " ", "SpinnerInfo" }) end
-    table.insert(chunks, { "(", "SpinnerDim" })
-    table.insert(chunks, { parent.adapter, "SpinnerInfo" })
-    table.insert(chunks, { ")", "SpinnerDim" })
-  end
-  if #chunks == 0 then return nil end
-  return chunks
+  return self:_build_metadata_chunks(parent, { format = "model_adapter" })
 end
 
 function Spinner:_build_status_line(parent, active_parent_count, bufnr)
@@ -483,18 +566,7 @@ end
 
 function Spinner:_build_inline_adapter_line(inline)
   if not self.config.display.show_model then return nil end
-  local chunks = {}
-  local model = inline.model
-  if type(model) == "table" then model = model.name or model.default or model.id or model.model end
-  if model then table.insert(chunks, { tostring(model), "SpinnerInfo" }) end
-  if inline.adapter then
-    if #chunks > 0 then table.insert(chunks, { " ", "SpinnerInfo" }) end
-    table.insert(chunks, { "(", "SpinnerDim" })
-    table.insert(chunks, { inline.adapter, "SpinnerInfo" })
-    table.insert(chunks, { ")", "SpinnerDim" })
-  end
-  if #chunks == 0 then return nil end
-  return chunks
+  return self:_build_metadata_chunks(inline, { format = "model_adapter" })
 end
 
 function Spinner:_build_display_lines()
@@ -544,6 +616,30 @@ function Spinner:_build_display_lines()
   end
 
   return lines
+end
+
+---@param bufnr number
+---@return string|nil
+function Spinner:build_winbar_segment(bufnr)
+  if not self:_show_winbar() then return nil end
+
+  local manager = state.instance()
+  if not manager or not manager.get_parent_view then return nil end
+
+  local view = manager:get_parent_view()
+  local parent = view.parents and view.parents[bufnr]
+  if not parent or parent.status == "idle" then return nil end
+
+  local metadata = self:_build_metadata_chunks(parent, {
+    format = self.config.winbar and self.config.winbar.format or DEFAULT_CONFIG.winbar.format,
+  })
+  if not metadata then return nil end
+
+  local chunks = self:_build_winbar_indicator_chunks(parent)
+  table.insert(chunks, { " ", "SpinnerDim" })
+  vim.list_extend(chunks, metadata)
+
+  return self:_chunks_to_winbar_text(chunks)
 end
 
 function Spinner:_virt_line_width(virt_line)
@@ -747,6 +843,7 @@ function Spinner:_start_animation()
       self.state.frame = (self.state.frame % #self.config.spinner.frames) + 1
       self.state.subagent_frame = (self.state.subagent_frame % #self.config.subagent_spinner.frames) + 1
       self:_update_display()
+      self:_refresh_winbars()
     end)
   )
 end
@@ -759,12 +856,28 @@ function Spinner:_stop_animation()
   self.state.animation_timer = nil
 end
 
+function Spinner:_refresh_winbars()
+  if not self:_show_winbar() then return end
+
+  local manager = state.instance()
+  if not manager or not manager.get_parent_view then return end
+
+  local ok, navigation = pcall(require, "hive.agents.navigation")
+  if not ok then return end
+
+  local view = manager:get_parent_view()
+  for bufnr, _ in pairs(view.parents or {}) do
+    navigation.refresh_winbar(bufnr)
+  end
+end
+
 function Spinner:_ensure_ui_visible()
   local manager = state.instance()
   if not manager then return end
 
   local view = manager:get_view()
   if not self:_has_visible_content(view) then
+    self:_refresh_winbars()
     self:_close_window()
     self:_stop_animation()
     return
@@ -772,6 +885,7 @@ function Spinner:_ensure_ui_visible()
 
   if not self:_is_window_valid() then self:_create_window() end
   self:_update_display()
+  self:_refresh_winbars()
   if self:_needs_animation(view) then self:_start_animation() end
 end
 
@@ -827,6 +941,7 @@ function M.setup(user_config)
       "CodeCompanionRequestStarted",
       "CodeCompanionRequestFinished",
       "CodeCompanionRequestStreaming",
+      "CodeCompanionRequestMetadata",
     },
     group = group,
     callback = function(args)
@@ -875,6 +990,15 @@ function M.setup(user_config)
             string.format(
               "event: CodeCompanionRequestStreaming [chat] -> on_request_streaming(bufnr=%s)",
               tostring(event_bufnr)
+            )
+          )
+        elseif args.match == "CodeCompanionRequestMetadata" then
+          if data.adapter then manager:on_chat_adapter(event_bufnr, data.adapter) end
+          debug(
+            string.format(
+              "event: CodeCompanionRequestMetadata [chat] -> on_chat_adapter(bufnr=%s, provider=%s)",
+              tostring(event_bufnr),
+              data.adapter and data.adapter.provider or "nil"
             )
           )
         elseif args.match == "CodeCompanionRequestFinished" then
@@ -1106,6 +1230,13 @@ end
 function M.get_config()
   if _spinner_instance then return vim.deepcopy(_spinner_instance.config) end
   return vim.deepcopy(DEFAULT_CONFIG)
+end
+
+---@param bufnr number
+---@return string|nil
+function M.get_winbar_segment(bufnr)
+  if not _spinner_instance then return nil end
+  return _spinner_instance:build_winbar_segment(bufnr)
 end
 
 return M
