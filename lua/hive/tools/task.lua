@@ -21,6 +21,8 @@ local fmt = string.format
 -- Task-Specific Icons
 -- ============================================================================
 
+local DEFAULT_SUBAGENT_TYPE = "explorer"
+
 local ICONS = {
   explorer = "",
   general = "",
@@ -32,6 +34,7 @@ local ICONS = {
 local AGENT_ICONS = { ICONS.explorer, ICONS.general, ICONS.analyzer, ICONS.default }
 
 local SUSPICIOUS_FAST_MS = 2000
+local normalize_tasks
 
 -- ============================================================================
 -- TaskBatch Class
@@ -75,11 +78,11 @@ local _active_batches = {}
 function TaskBatch.new(args)
   local self = setmetatable({}, TaskBatch)
 
-  self.tasks = args.tasks
+  self.tasks = normalize_tasks(args.tasks)
   self.parent_chat = args.parent_chat
   self.callback = args.callback
   self.results = {}
-  self.pending = #args.tasks
+  self.pending = #self.tasks
   self.timer = nil
   self.child_bufnrs = {}
   self.child_chats = {}
@@ -114,6 +117,39 @@ end
 ---@return string
 local function get_agent_icon(agent_name)
   return ICONS[agent_name] or ICONS.default
+end
+
+---@param subagent_type any
+---@return string
+local function normalize_subagent_type(subagent_type)
+  local registry = require("hive.agents.registry")
+
+  if type(subagent_type) == "string" then subagent_type = vim.trim(subagent_type):lower() end
+
+  if type(subagent_type) == "string" and vim.tbl_contains(registry.get_task_subagent_names(), subagent_type) then
+    return subagent_type
+  end
+
+  log:warn(
+    "[Task] Invalid or missing subagent_type '%s'; defaulting to '%s'",
+    tostring(subagent_type),
+    DEFAULT_SUBAGENT_TYPE
+  )
+  return DEFAULT_SUBAGENT_TYPE
+end
+
+---@param tasks table[]|nil
+---@return table[]
+normalize_tasks = function(tasks)
+  local normalized = {}
+
+  for i, task in ipairs(tasks or {}) do
+    normalized[i] = vim.tbl_extend("force", {}, task or {}, {
+      subagent_type = normalize_subagent_type(task and task.subagent_type),
+    })
+  end
+
+  return normalized
 end
 
 -- ============================================================================
@@ -714,7 +750,7 @@ end
 ---@param parent_chat table
 ---@param callback function Called when all tasks complete
 local function execute_tasks(args, parent_chat, callback)
-  local tasks = args.tasks
+  local tasks = normalize_tasks(args.tasks)
 
   if not tasks or #tasks == 0 then
     callback({
@@ -754,6 +790,8 @@ return {
           data = "No chat context available",
         }
       end
+
+      args.tasks = normalize_tasks(args.tasks)
 
       log:debug("[Task] cmds called with %d task(s)", args.tasks and #args.tasks or 0)
 
@@ -808,9 +846,9 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
               properties = {
                 subagent_type = {
                   type = "string",
-                  description = "Which subagent: 'explorer' for codebase exploration, 'general' for research, 'analyzer' for code analysis",
-                  -- TODO: need mechanism to add new subagents dynamically
-                  enum = { "explorer", "general", "analyzer" },
+                  description = "Which subagent: 'explorer' for codebase exploration, 'general' for research, 'analyzer' for code analysis. Defaults to 'explorer' if omitted or invalid.",
+                  default = DEFAULT_SUBAGENT_TYPE,
+                  enum = require("hive.agents.registry").get_task_subagent_names(),
                 },
                 description = {
                   type = "string",
@@ -838,7 +876,7 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
   },
   output = {
     cmd_string = compat.output_cmd_string(function(self, _meta)
-      local tasks = self.args.tasks or {}
+      local tasks = normalize_tasks(self.args.tasks)
       if #tasks == 1 then
         return fmt("Spawn %s subagent: %s", subagent.utils.capitalize(tasks[1].subagent_type), tasks[1].description)
       end
@@ -846,7 +884,7 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
     end),
 
     prompt = compat.output_prompt(function(self, _meta)
-      local tasks = self.args.tasks or {}
+      local tasks = normalize_tasks(self.args.tasks)
       local count = #tasks
       if count == 0 then return "Run task tool?" end
 
@@ -871,7 +909,7 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
       local chat = meta.tools.chat
       local output = vim.iter(stdout):flatten():join("\n")
 
-      local tasks = self.args.tasks or {}
+      local tasks = normalize_tasks(self.args.tasks)
       local task_count = #tasks
 
       local success_match = output:match("(%d+) succeeded")
@@ -953,7 +991,7 @@ The user can navigate to subagent chats with keymap to see detailed output.]],
       local chat = meta.tools.chat
       local output = vim.iter(stderr):flatten():join("\n")
 
-      local tasks = self.args.tasks or {}
+      local tasks = normalize_tasks(self.args.tasks)
       local task_count = #tasks
 
       local failed_match = output:match("(%d+) failed")
