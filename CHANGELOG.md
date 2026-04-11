@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.0.0](https://github.com/bassamsdata/hive.nvim/compare/v1.4.0...v2.0.0) (2026-04-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* add team tool and new plan workflow, and fix the prun context
+* rename the plugin to hive.nvim and fix the docs site
+* Add core features, refactor and enhancements after many manual testing
+* **tools:** add prune tool
+
+### Features
+
+* activate sessions by default ([d9c4fa7](https://github.com/bassamsdata/hive.nvim/commit/d9c4fa7f45fb04c16b63c5286420aa1c06009e0b))
+* Add core features, refactor and enhancements after many manual testing ([b338b22](https://github.com/bassamsdata/hive.nvim/commit/b338b22a74dab68fef3e2f776c0e24edc1992139))
+* Add prune UI and fix prune tool for openai repsonses mechanism ([1b66bd0](https://github.com/bassamsdata/hive.nvim/commit/1b66bd08eecb515cc4aa904089f1a209bcbc1ecf))
+* Add readme and docs ([5ca0557](https://github.com/bassamsdata/hive.nvim/commit/5ca0557e026ad1cdf3092a19a4b5f8eeb77960bb))
+* Add session save and restore module ([8cf7aaf](https://github.com/bassamsdata/hive.nvim/commit/8cf7aafbef3f23eded008bb4b13c349af4026229))
+* add some other stuff ([b97cbd4](https://github.com/bassamsdata/hive.nvim/commit/b97cbd4622d73ff565b7fc73401330c476757992))
+* add team tool and new plan workflow, and fix the prun context ([1fde341](https://github.com/bassamsdata/hive.nvim/commit/1fde3412238ee4bb1a64bc593dae5ff26c8c69ee))
+* **Agent_manager:** Add new Agent Manager UI ([6c03157](https://github.com/bassamsdata/hive.nvim/commit/6c03157ce4810dbe94b1c5bd48b4e1a4cf84f780))
+* **chat_UI:** when closing parent chat, also close all child chats ([8d4b5fb](https://github.com/bassamsdata/hive.nvim/commit/8d4b5fb2465698a672007100e560dac42a35746b))
+* fix the prune tool and add notification for approval request with ([9b902f0](https://github.com/bassamsdata/hive.nvim/commit/9b902f0eb3df621d70357a0816f5749ee1979cfc))
+* more robust and useful info for sesions ([3810336](https://github.com/bassamsdata/hive.nvim/commit/3810336f8b00f0d2f1b997902a54caa7dabc1a85))
+* rename the plugin to hive.nvim and fix the docs site ([58ca93e](https://github.com/bassamsdata/hive.nvim/commit/58ca93ecd077628e25cc02affb680d997a938c60))
+* **todo:** Add split todo window and enhance the module ([631c3cd](https://github.com/bassamsdata/hive.nvim/commit/631c3cdb5275b7c573384f89b814da3d9f5c8dbd))
+* **tools:** add prune tool ([bddd1c1](https://github.com/bassamsdata/hive.nvim/commit/bddd1c186885b0a9c9bb5c7b1b03015d3bc50e3e))
+* **toolsUX:** send system notification when Neovim loses focus for ask_user tool ([fdaa438](https://github.com/bassamsdata/hive.nvim/commit/fdaa438e95d06648204bb98c78e625916596cf32))
+* update .gitignore ([8acf4c8](https://github.com/bassamsdata/hive.nvim/commit/8acf4c8abd17f12efea70f13ea59f0b11953456e))
+* update docs and update files headers ([0a69945](https://github.com/bassamsdata/hive.nvim/commit/0a699453b189bf93e1514b8ba58e939b93448646))
+
+
+### Bug Fixes
+
+* **agents:** remove old reminders when adding new ones ([1ad123a](https://github.com/bassamsdata/hive.nvim/commit/1ad123a5adce82f1086247ab89453a676d9d35cf))
+* **consult:** fix icons and highlights in status ([4470e2e](https://github.com/bassamsdata/hive.nvim/commit/4470e2e24741ac0d3647058c1e5df29dc1f54963))
+* fix session snapshot ([9a1cc52](https://github.com/bassamsdata/hive.nvim/commit/9a1cc520113f2afe292b266dd6a48093ea4e6f64))
+* fix swarm to be more resilient if something happened to agents ([4af965d](https://github.com/bassamsdata/hive.nvim/commit/4af965d3afd0663dc35668c0133330cffde8f96f))
+* make default task agent for smaller LLMs ([c18f9bd](https://github.com/bassamsdata/hive.nvim/commit/c18f9bdaea576e2d1a5b3a3ed7cd1debfb64a47f))
+* **skills:** fix markdown ([7412586](https://github.com/bassamsdata/hive.nvim/commit/741258642798021b243e7bf7d5bd8737af702ca8))
+* **status:** fix highlights ([e468121](https://github.com/bassamsdata/hive.nvim/commit/e4681214417f369b6fa24410375e79d0185fbe8d))
+* **todo:** correctly close the split viewer ([0f28593](https://github.com/bassamsdata/hive.nvim/commit/0f285930f460b17d58d37b7e9ba193d23006e868))
+* use bun instead ([d01eded](https://github.com/bassamsdata/hive.nvim/commit/d01eded542fef1f904be2d1989e653e85603f30c))
+
 ## [1.4.0](https://github.com/bassamsdata/codecompanion-extra.nvim/compare/v1.3.0...v1.4.0) (2026-02-18)
 
 
