@@ -1,5 +1,4 @@
 local api = vim.api
-local config = require("codecompanion.config")
 
 local M = {}
 
@@ -33,6 +32,7 @@ local function _summary(title, messages)
   if type(title) == "string" and vim.trim(title) ~= "" then return vim.trim(title) end
 
   for _, message in ipairs(messages or {}) do
+    local config = require("codecompanion.config")
     if message.role == config.constants.USER_ROLE and type(message.content) == "string" then
       local summary = vim.trim((message.content:gsub("%s+", " ")))
       if summary ~= "" then

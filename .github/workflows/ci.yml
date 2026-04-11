@@ -21,8 +21,8 @@ jobs:
               neovim_url: https://github.com/neovim/neovim/releases/download/nightly/nvim-linux-x86_64.tar.gz
               name: Neovim nightly
             - os: ubuntu-latest
-              neovim_url: https://github.com/neovim/neovim/releases/download/v0.11.0/nvim-linux-x86_64.tar.gz
-              name: Neovim 0.11.0 (Linux)
+              neovim_url: https://github.com/neovim/neovim/releases/download/v0.12.0/nvim-linux-x86_64.tar.gz
+              name: Neovim 0.12.0 (Linux)
 
     steps:
       - name: Checkout Repository
