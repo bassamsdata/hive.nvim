@@ -433,6 +433,16 @@ function M.get_evaluation(bufnr)
   return nil
 end
 
+---Run a fresh evaluation against the chat's current state
+---@param chat table CodeCompanion chat instance
+---@return ContextLifecycle.Evaluation|nil
+function M.evaluate_now(chat)
+  if not _instance then return nil end
+  local eval = _instance._evaluator:evaluate(chat)
+  _instance._last_eval[chat.bufnr] = eval
+  return eval
+end
+
 ---Get compaction count for a buffer
 ---@param bufnr number
 ---@return number

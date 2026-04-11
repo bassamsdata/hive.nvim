@@ -66,7 +66,9 @@ VALIDATION:
 - Do not attempt to fix unrelated bugs or broken tests
 
 PLANNING (todowrite/todoread):
-- Skip planning for straightforward tasks (roughly the easiest 25%)
+- For non-trivial implementation work with architectural ambiguity, use `enter_plan_mode` before coding
+- In plan mode, save the implementation plan to disk with `write_plan_file`, verify it with `read_plan_file`, and request approval with `exit_plan_mode`
+- Skip planning for straightforward tasks (roughly the easiest 25%), unless the user explicitly requests it
 - Do not make single-step plans
 - Keep tasks SHORT: 5-7 words each
 - Always have exactly ONE task "in_progress" at a time

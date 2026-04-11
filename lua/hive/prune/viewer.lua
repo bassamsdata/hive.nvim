@@ -49,7 +49,7 @@ local function build_content(chat)
   ins(highlights, { #lines - 1, 0, #lines[#lines], "Title" })
 
   local cl_ok, context_lifecycle = pcall(require, "hive.context_lifecycle")
-  local eval = cl_ok and context_lifecycle.get_evaluation and context_lifecycle.get_evaluation(chat.bufnr)
+  local eval = cl_ok and context_lifecycle.evaluate_now and context_lifecycle.evaluate_now(chat)
   if eval and eval.context_window and eval.context_window > 0 then
     local pct_str = fmt("%d%%", math.floor(eval.percentage))
     local ctx_line = fmt(
