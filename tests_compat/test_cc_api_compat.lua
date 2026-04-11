@@ -592,7 +592,7 @@ T["Tool registration"]["_register_extra_tools produces resolvable tools"] = func
   end
 
   -- Run the actual registration
-  agents._register_extra_tools()
+  agents._register_tools()
 
   -- Collect newly registered tool names
   local extra_tools = {}
