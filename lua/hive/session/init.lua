@@ -57,11 +57,36 @@ local function _get_draft(chat)
   local ok, parser = pcall(require, "codecompanion.interactions.chat.parser")
   if not ok then return nil end
 
-  local draft = parser.messages(chat, chat.header_line)
-  if not draft or type(draft.content) ~= "string" then return nil end
+  local parsed_ok, draft = pcall(parser.messages, chat, chat.header_line)
+  if not parsed_ok or not draft or type(draft.content) ~= "string" then return nil end
   if vim.trim(draft.content) == "" then return nil end
 
   return draft.content
+end
+
+---@param chat CodeCompanion.Chat
+---@param draft string|nil
+---@return boolean
+local function _has_meaningful_content(chat, draft)
+  if type(draft) == "string" and vim.trim(draft) ~= "" then return true end
+
+  local intro_message = type(chat.intro_message) == "string" and vim.trim(chat.intro_message) or nil
+
+  for _, message in ipairs(chat.messages or {}) do
+    if type(message.content) == "string" then
+      local content = vim.trim(message.content)
+      if content ~= "" and message.role ~= "system" then
+        if intro_message and content == intro_message then
+        elseif message.role == "user" or message.role == "llm" then
+          return true
+        elseif message.opts and message.opts.type then
+          return true
+        end
+      end
+    end
+  end
+
+  return false
 end
 
 ---@param bufnr number
@@ -352,12 +377,14 @@ function M.register_chat(chat)
 
   chat:add_callback("on_completed", function(c)
     if not (_config.autosave and _config.autosave.enabled and _config.autosave.on_done) then return end
-    M.save_chat(c, { silent = true, session_id = _chat_session_ids[c.id] })
+    local _, err = M.save_chat(c, { silent = true, session_id = _chat_session_ids[c.id] })
+    if err and err ~= "Chat is empty" then notify(err, vim.log.levels.ERROR) end
   end)
 
   chat:add_callback("on_closed", function(c)
     if not (_config.autosave and _config.autosave.enabled and _config.autosave.on_close) then return end
-    M.save_chat(c, { silent = true, session_id = _chat_session_ids[c.id] })
+    local _, err = M.save_chat(c, { silent = true, session_id = _chat_session_ids[c.id] })
+    if err and err ~= "Chat is empty" then notify(err, vim.log.levels.ERROR) end
     _registered[c.id] = nil
     _chat_session_ids[c.id] = nil
     _pending_folds[c.bufnr] = nil
@@ -376,6 +403,9 @@ function M.save_chat(chat, opts)
   local existing_id = _saved_chats[chat.id] or _chat_session_ids[chat.id]
   local saved_at = os.time()
   local draft = _get_draft(chat)
+
+  if not _has_meaningful_content(chat, draft) then return nil, "Chat is empty" end
+
   local data = snapshot.capture(chat, {
     draft = draft,
     saved_at = saved_at,
@@ -389,7 +419,7 @@ function M.save_chat(chat, opts)
   _saved_chats[chat.id] = session_id
   _chat_session_ids[chat.id] = session_id
 
-  if not opts.silent then notify("Saved chat session: " .. (data.chat.title or data.session.summary)) end
+  if not opts.silent then notify("Saved chat session: " .. data.session.summary) end
 
   return session_id, nil
 end
@@ -441,6 +471,29 @@ function M.restore(session_id, opts)
   return restored, nil
 end
 
+---@param summary string|nil
+---@return string
+local function _display_title(summary)
+  local title = vim.trim(summary or "Untitled chat")
+  local sentence = title:match("^(.-[%.!?])[%s]*") or title:match("^([^\n]+)") or title
+  sentence = vim.trim(sentence)
+  if #sentence > 80 then return sentence:sub(1, 77) .. "..." end
+  return sentence
+end
+
+---@param saved_at integer|nil
+---@return string
+local function _relative_saved_time(saved_at)
+  if not saved_at then return "󰥔 unknown" end
+
+  local diff = math.max(0, os.time() - saved_at)
+  if diff < 60 then return "󰥔 now" end
+  if diff < 3600 then return string.format("󰥔 %dm", math.floor(diff / 60)) end
+  if diff < 86400 then return string.format("󰥔 %dh", math.floor(diff / 3600)) end
+  if diff < 604800 then return string.format("󰥔 %dd", math.floor(diff / 86400)) end
+  return string.format("󰥔 %dw", math.floor(diff / 604800))
+end
+
 ---@param opts? { prompt?: string }
 function M.restore_picker(opts)
   opts = opts or {}
@@ -454,8 +507,10 @@ function M.restore_picker(opts)
     prompt = opts.prompt or "Restore Hive Session",
     format_item = function(item)
       local when = item.saved_at and os.date("%Y-%m-%d %H:%M", item.saved_at) or "unknown"
+      local since = _relative_saved_time(item.saved_at)
       local model = item.model and (" · " .. item.model) or ""
-      return string.format("[%s] %s%s", when, item.title or item.summary or item.id, model)
+      local name = _display_title(item.summary or item.title or item.id)
+      return string.format("[%s · %s] %s%s", when, since, name, model)
     end,
   }, function(choice)
     if not choice then return end

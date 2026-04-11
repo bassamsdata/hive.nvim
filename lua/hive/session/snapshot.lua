@@ -30,9 +30,14 @@ local function _copy(value)
   return copy
 end
 
+---@param title string|nil
 ---@param messages table[]
 ---@return string
-local function _summary(messages)
+local function _summary(title, messages)
+  if type(title) == "string" and vim.trim(title) ~= "" then
+    return vim.trim(title)
+  end
+
   for _, message in ipairs(messages or {}) do
     if message.role == config.constants.USER_ROLE and type(message.content) == "string" then
       local summary = vim.trim((message.content:gsub("%s+", " ")))
@@ -261,8 +266,7 @@ function M.capture(chat, opts)
     session = {
       id = opts.session_id,
       saved_at = opts.saved_at or os.time(),
-      summary = (current_node.chat.title and current_node.chat.title ~= "") and current_node.chat.title
-        or _summary(current_node.messages),
+      summary = _summary(current_node.chat.title, current_node.messages),
     },
     adapter = current_node.adapter,
     chat = current_node.chat,

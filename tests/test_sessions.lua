@@ -102,6 +102,7 @@ T["snapshot"]["captures durable chat state"] = function()
   MiniTest.expect.equality("openrouter", data.adapter.name)
   MiniTest.expect.equality("anthropic/claude-sonnet-4", data.adapter.model)
   MiniTest.expect.equality("Session Title", data.chat.title)
+  MiniTest.expect.equality("Session Title", data.session.summary)
   MiniTest.expect.equality(3, data.chat.cycle)
   MiniTest.expect.equality(9, data.chat.header_line)
   MiniTest.expect.equality("unfinished prompt", data.draft)
@@ -159,6 +160,74 @@ T["snapshot"]["removes non serializable values"] = function()
   vim.api = original_api
 end
 
+T["snapshot"]["prefers generated title for summary"] = function()
+  local original_api = vim.api
+  vim.api = setmetatable({
+    nvim_buf_get_lines = function()
+      return { "## User --------------------------------------------------", "hello" }
+    end,
+  }, { __index = original_api })
+
+  local data = snapshot.capture({
+    adapter = {
+      type = "http",
+      name = "openrouter",
+      schema = { model = { default = "test-model" } },
+      formatted_name = "OpenRouter",
+      roles = {},
+      features = {},
+      url = "",
+      body = {},
+      headers = {},
+      parameters = {},
+      handlers = {},
+      methods = {},
+    },
+    aug = 1,
+    buffer_context = {},
+    buffer_diffs = {},
+    builder = { state = {} },
+    callbacks = {},
+    chat_parser = {},
+    context = {},
+    current_tool = nil,
+    cycle = 1,
+    create_buf = function()
+    end,
+    header_line = 1,
+    header_ns = 1,
+    hidden = false,
+    id = 17,
+    opts = {},
+    subscribers = {},
+    tools = {},
+    yaml_parser = {},
+    _last_role = nil,
+    bufnr = 17,
+    title = "Generated Chat Title",
+    messages = {
+      { role = "user", content = "hello world" },
+    },
+    tool_registry = { chat = {}, ctx = {}, flags = {}, groups = {}, in_use = {}, schemas = {} },
+    ui = {
+      adapter = {},
+      aug = 1,
+      chat_bufnr = 17,
+      chat_id = 17,
+      cursor = {},
+      folds = { fold_summaries = {} },
+      header_ns = 1,
+      roles = {},
+      winnr = 0,
+      settings = {},
+      tokens = 0,
+    },
+  })
+
+  MiniTest.expect.equality("Generated Chat Title", data.session.summary)
+  vim.api = original_api
+end
+
 T["store"] = MiniTest.new_set({
   hooks = {
     post_case = function()
@@ -206,6 +275,140 @@ T["store"]["writes reads lists and deletes sessions"] = function()
   MiniTest.expect.equality(0, vim.fn.filereadable(filepath))
 
   cleanup_session(session_id)
+end
+
+T["runtime"] = MiniTest.new_set()
+
+T["runtime"]["rejects empty chats"] = function()
+  local sessions = require("hive.session")
+
+  local chat = {
+    id = 44,
+    adapter = {
+      type = "http",
+      name = "openrouter",
+      schema = { model = { default = "test-model" } },
+      formatted_name = "OpenRouter",
+      roles = {},
+      features = {},
+      url = "",
+      body = {},
+      headers = {},
+      parameters = {},
+      handlers = {},
+      methods = {},
+    },
+    messages = {},
+    title = nil,
+    settings = {},
+    tool_registry = { flags = {}, groups = {}, in_use = {}, schemas = {} },
+  }
+
+  local session_id, err = sessions.save_chat(chat, { silent = true })
+  MiniTest.expect.equality(nil, session_id)
+  MiniTest.expect.equality("Chat is empty", err)
+end
+
+T["runtime"]["rejects untouched intro chats"] = function()
+  local sessions = require("hive.session")
+
+  local chat = {
+    id = 45,
+    adapter = {
+      type = "http",
+      name = "openrouter",
+      schema = { model = { default = "test-model" } },
+      formatted_name = "OpenRouter",
+      roles = {},
+      features = {},
+      url = "",
+      body = {},
+      headers = {},
+      parameters = {},
+      handlers = {},
+      methods = {},
+    },
+    intro_message = "How can I help you today?",
+    messages = {
+      { role = "llm", content = "How can I help you today?" },
+    },
+    title = "Fresh Chat",
+    settings = {},
+    tool_registry = { flags = {}, groups = {}, in_use = {}, schemas = {} },
+  }
+
+  local session_id, err = sessions.save_chat(chat, { silent = true })
+  MiniTest.expect.equality(nil, session_id)
+  MiniTest.expect.equality("Chat is empty", err)
+end
+
+T["snapshot"]["keeps full title in stored summary"] = function()
+  local original_api = vim.api
+  vim.api = setmetatable({
+    nvim_buf_get_lines = function()
+      return { "## User --------------------------------------------------", "hello" }
+    end,
+  }, { __index = original_api })
+
+  local long_title = "This is the first sentence. This should not appear in picker display."
+  local data = snapshot.capture({
+    adapter = {
+      type = "http",
+      name = "openrouter",
+      schema = { model = { default = "test-model" } },
+      formatted_name = "OpenRouter",
+      roles = {},
+      features = {},
+      url = "",
+      body = {},
+      headers = {},
+      parameters = {},
+      handlers = {},
+      methods = {},
+    },
+    aug = 1,
+    buffer_context = {},
+    buffer_diffs = {},
+    builder = { state = {} },
+    callbacks = {},
+    chat_parser = {},
+    context = {},
+    current_tool = nil,
+    cycle = 1,
+    create_buf = function()
+    end,
+    header_line = 1,
+    header_ns = 1,
+    hidden = false,
+    id = 18,
+    opts = {},
+    subscribers = {},
+    tools = {},
+    yaml_parser = {},
+    _last_role = nil,
+    bufnr = 18,
+    title = long_title,
+    messages = {
+      { role = "user", content = "hello world" },
+    },
+    tool_registry = { chat = {}, ctx = {}, flags = {}, groups = {}, in_use = {}, schemas = {} },
+    ui = {
+      adapter = {},
+      aug = 1,
+      chat_bufnr = 18,
+      chat_id = 18,
+      cursor = {},
+      folds = { fold_summaries = {} },
+      header_ns = 1,
+      roles = {},
+      winnr = 0,
+      settings = {},
+      tokens = 0,
+    },
+  })
+
+  MiniTest.expect.equality(long_title, data.session.summary)
+  vim.api = original_api
 end
 
 return T
