@@ -47,7 +47,6 @@ T["plan"]["state writes reads and exits"] = function()
       read_path = file_path,
       content = content,
       approved = exited.approved,
-      restore_agent = exited.restore_agent,
       inactive = plan.is_active(chat.bufnr),
     }
   ]])
@@ -57,7 +56,6 @@ T["plan"]["state writes reads and exits"] = function()
   expect.equality(result.read_path, result.state_path)
   expect.equality(result.content, "# Saved plan\n")
   expect.equality(result.approved, true)
-  expect.equality(result.restore_agent, "build")
   expect.equality(result.inactive, false)
 end
 

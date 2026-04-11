@@ -316,7 +316,6 @@ T["agents"]["activate applies plan agent prompt, tools, and session"] = function
 
   expect.equality(summary.ok, true)
   expect.equality(summary.active, "plan")
-  expect.equality(summary.plan_active, true)
   expect.equality(summary.plan_file_exists, true)
   expect.equality(summary.agent_prompt_count, 1)
   expect.equality(summary.has_default_prompt, false)
@@ -442,6 +441,7 @@ T["agents"]["entering plan mode creates plan file and augments prompt"] = functi
 
     agents.activate("build", chat, { silent = true })
     local state = assert(plan.enter(chat))
+    agents.refresh_active_agent(chat)
 
     local prompt = ""
     for _, msg in ipairs(chat.messages) do
@@ -456,7 +456,7 @@ T["agents"]["entering plan mode creates plan file and augments prompt"] = functi
     }
   ]])
 
-  expect.equality(summary.active, "plan")
+  expect.equality(summary.active, "build")
   expect.equality(summary.file_exists, true)
   expect.equality(summary.path:find("/.hive/plans/chat%-105%.md$") ~= nil, true)
   expect.equality(summary.has_suffix, true)
@@ -477,7 +477,7 @@ T["agents"]["plan tools write read and exit back to build"] = function()
 
     local enter_result = enter.cmds[1]({ chat = chat }, {}, {})
     vim.wait(1000, function()
-      return agents.active(chat.bufnr) == "plan"
+      return require("hive.plan").is_active(chat.bufnr)
     end)
     local write_result = write.cmds[1]({ chat = chat }, { content = "# Plan\n\n1. Inspect\n2. Implement" }, {})
     local read_result = read.cmds[1]({ chat = chat }, {}, {})
@@ -500,7 +500,7 @@ T["agents"]["plan tools write read and exit back to build"] = function()
       exit_status = exit_result and exit_result.status or "missing",
       active = agents.active(chat.bufnr),
       read_has_plan = read_result.data:find("# Plan", 1, true) ~= nil,
-      exit_mentions_build = exit_result and exit_result.data:find("Returned to `build` mode.", 1, true) ~= nil or false,
+      exit_mentions_workflow = exit_result and exit_result.data:find("Exited plan mode and restored the current workflow.", 1, true) ~= nil or false,
     }
   ]])
 
@@ -510,7 +510,7 @@ T["agents"]["plan tools write read and exit back to build"] = function()
   expect.equality(summary.exit_status, "success")
   expect.equality(summary.active, "build")
   expect.equality(summary.read_has_plan, true)
-  expect.equality(summary.exit_mentions_build, true)
+  expect.equality(summary.exit_mentions_workflow, true)
 end
 
 return T
