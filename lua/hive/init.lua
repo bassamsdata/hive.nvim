@@ -67,6 +67,11 @@ function M._setup_modules()
     twinchat.setup(M._config.twinchat or {})
   end
 
+  if config.is_module_enabled("sessions") then
+    local sessions = require("hive.session")
+    sessions.setup(M._config.sessions or {})
+  end
+
   if config.is_module_enabled("context_lifecycle") then
     local context_lifecycle = require("hive.context_lifecycle")
     context_lifecycle.setup(M._config.context_lifecycle or {})
@@ -145,6 +150,12 @@ end
 ---@return table Skills module
 function M.skills()
   return (require("hive.skills"))
+end
+
+---Get sessions module
+---@return table Sessions module
+function M.sessions()
+  return (require("hive.session"))
 end
 
 ---Check if initialized

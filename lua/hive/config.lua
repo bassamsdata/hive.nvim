@@ -40,6 +40,7 @@ end
 ---@field context_pruning? table Context pruning configuration
 ---@field debug? Hive.DebugConfig Debug logging configuration
 ---@field twinchat? TwinchatConfig Twinchat configuration
+---@field sessions? Hive.SessionConfig Session snapshot configuration
 
 ---@class Hive.SysNotifyConfig
 ---@field enabled boolean Enable system notifications
@@ -78,6 +79,10 @@ end
 ---@field system_prompt string|fun(info: TwinchatThresholdInfo): string System prompt for twin chat
 ---@field prompt_template string|fun(info: TwinchatThresholdInfo): string Prompt template for twin chat
 
+---@class Hive.SessionConfig
+---@field enabled boolean Enable chat session snapshots
+---@field autosave { enabled: boolean, on_done: boolean, on_close: boolean }
+
 ---@type Hive.Config
 M.defaults = {
   modules = {
@@ -87,9 +92,10 @@ M.defaults = {
     tools = { enabled = true },
     agents = { enabled = true },
     skills = { enabled = true },
-    context_pruning = { enabled = false },
+    context_pruning = { enabled = true },
     context_lifecycle = { enabled = true },
     twinchat = { enabled = false },
+    sessions = { enabled = true },
   },
 
   debug = {
@@ -282,6 +288,15 @@ M.defaults = {
     notify = true, -- Notify user on spawn
     system_prompt = nil, -- Use default
     prompt_template = nil, -- Use default
+  },
+
+  sessions = {
+    enabled = true,
+    autosave = {
+      enabled = true,
+      on_done = true,
+      on_close = true,
+    },
   },
 }
 

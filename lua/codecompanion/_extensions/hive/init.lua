@@ -170,5 +170,11 @@ return {
     spinner = function()
       return require("hive").spinner()
     end,
+
+    ---Get sessions module
+    ---@return table
+    sessions = function()
+      return require("hive").sessions()
+    end,
   },
 }
