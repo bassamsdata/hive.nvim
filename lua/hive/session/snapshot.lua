@@ -10,13 +10,9 @@ M.VERSION = 2
 local function _copy(value)
   local value_type = type(value)
 
-  if value_type == "function" or value_type == "userdata" or value_type == "thread" then
-    return nil
-  end
+  if value_type == "function" or value_type == "userdata" or value_type == "thread" then return nil end
 
-  if value_type ~= "table" then
-    return value
-  end
+  if value_type ~= "table" then return value end
 
   local copy = {}
   for key, item in pairs(value) do
@@ -34,17 +30,13 @@ end
 ---@param messages table[]
 ---@return string
 local function _summary(title, messages)
-  if type(title) == "string" and vim.trim(title) ~= "" then
-    return vim.trim(title)
-  end
+  if type(title) == "string" and vim.trim(title) ~= "" then return vim.trim(title) end
 
   for _, message in ipairs(messages or {}) do
     if message.role == config.constants.USER_ROLE and type(message.content) == "string" then
       local summary = vim.trim((message.content:gsub("%s+", " ")))
       if summary ~= "" then
-        if #summary > 80 then
-          return summary:sub(1, 77) .. "..."
-        end
+        if #summary > 80 then return summary:sub(1, 77) .. "..." end
         return summary
       end
     end
@@ -58,14 +50,10 @@ end
 local function _model(chat)
   if not chat.adapter or chat.adapter.type ~= "http" then return nil end
 
-  if chat.settings and chat.settings.model then
-    return chat.settings.model
-  end
+  if chat.settings and chat.settings.model then return chat.settings.model end
 
   local model = chat.adapter.schema and chat.adapter.schema.model
-  if type(model) == "table" then
-    return model.default or model.name or model.id or model.model
-  end
+  if type(model) == "table" then return model.default or model.name or model.id or model.model end
 
   return model
 end
@@ -89,22 +77,14 @@ local function _capture_folds(chat)
 
     local ok_end, value = pcall(api.nvim_buf_call, chat.bufnr, function()
       local fold_end = vim.fn.foldclosedend(start_row + 1)
-      if type(fold_end) == "number" and fold_end > 0 then
-        return fold_end - 1
-      end
+      if type(fold_end) == "number" and fold_end > 0 then return fold_end - 1 end
       return nil
     end)
     if ok_end then end_row = value end
 
-    if end_row == nil and next_start then
-      end_row = next_start - 1
-    end
-    if end_row == nil then
-      end_row = start_row
-    end
-    if end_row >= line_count then
-      end_row = math.max(line_count - 1, start_row)
-    end
+    if end_row == nil and next_start then end_row = next_start - 1 end
+    if end_row == nil then end_row = start_row end
+    if end_row >= line_count then end_row = math.max(line_count - 1, start_row) end
 
     table.insert(folds, {
       start_row = start_row,
@@ -129,9 +109,7 @@ local function _capture_node(chat, session, draft)
 
   local agent_name
   local ok_agents, agents = pcall(require, "hive.agents")
-  if ok_agents then
-    agent_name = agents.active(chat.bufnr)
-  end
+  if ok_agents then agent_name = agents.active(chat.bufnr) end
 
   return {
     adapter = {
@@ -199,9 +177,7 @@ local function _capture_tree(root_chat, current_chat, draft)
   local ok_codecompanion, codecompanion = pcall(require, "codecompanion")
   if not ok_hierarchy or not ok_codecompanion then return nil end
 
-  if type(hierarchy.get_root) ~= "function" or type(hierarchy.get_tree) ~= "function" then
-    return nil
-  end
+  if type(hierarchy.get_root) ~= "function" or type(hierarchy.get_tree) ~= "function" then return nil end
 
   local root_bufnr = hierarchy.get_root(current_chat.bufnr)
   local tree_bufnrs = hierarchy.get_tree(root_bufnr)
@@ -247,15 +223,15 @@ function M.capture(chat, opts)
   opts = opts or {}
 
   local ok_hierarchy, hierarchy = pcall(require, "hive.agents.hierarchy")
-  local session = ok_hierarchy and type(hierarchy.get_session) == "function" and hierarchy.get_session(chat.bufnr) or nil
-  local root_bufnr = ok_hierarchy and type(hierarchy.get_root) == "function" and hierarchy.get_root(chat.bufnr) or chat.bufnr
+  local session = ok_hierarchy and type(hierarchy.get_session) == "function" and hierarchy.get_session(chat.bufnr)
+    or nil
+  local root_bufnr = ok_hierarchy and type(hierarchy.get_root) == "function" and hierarchy.get_root(chat.bufnr)
+    or chat.bufnr
 
   local root_chat = chat
   if root_bufnr ~= chat.bufnr then
     local ok_codecompanion, codecompanion = pcall(require, "codecompanion")
-    if ok_codecompanion then
-      root_chat = codecompanion.buf_get_chat(root_bufnr) or chat
-    end
+    if ok_codecompanion then root_chat = codecompanion.buf_get_chat(root_bufnr) or chat end
   end
 
   local current_node = _capture_node(chat, session, opts.draft)
