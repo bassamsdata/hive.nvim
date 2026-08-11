@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/bassamsdata/hive.nvim/compare/v2.0.0...v2.0.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* make it fail gracefully ([d145fc4](https://github.com/bassamsdata/hive.nvim/commit/d145fc40f9547de05f86d8abd20ad4d2b31d30db))
+
 ## [2.0.0](https://github.com/bassamsdata/hive.nvim/compare/v1.4.0...v2.0.0) (2026-04-11)
 
 
