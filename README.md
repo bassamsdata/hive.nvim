@@ -1,6 +1,7 @@
 # Hive.nvim
 
-Extension plugin for [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) that adds a multi-agent system with parallel subagent orchestration, context lifecycle management, and extended tooling — designed for long, autonomous coding workflows.
+A multi-agent system for Neovim with parallel subagent orchestration, context lifecycle management, and extended tooling, built on [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) for long-running, autonomous coding workflows.
+
 
 
 
